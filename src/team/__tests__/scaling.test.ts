@@ -2968,8 +2968,9 @@ esac
           assert.match(tmuxCommands[mutationIndex - 1]!, /^show-option -qv -p -t %(?:21|31) @omx_team_pane_owner_id$/);
           assert.equal(tmuxCommands[mutationIndex - 2], 'list-panes -a -F #{pane_id}\t#{pane_dead}\t#{pane_pid}');
         } else {
-          assert.ok(mutationIndex > 0);
-          assert.equal(tmuxCommands[mutationIndex - 1], 'list-panes -a -F #{pane_id}\t#{pane_dead}\t#{pane_pid}');
+          assert.ok(mutationIndex > 1);
+          assert.equal(tmuxCommands[mutationIndex - 2], 'list-panes -a -F #{pane_id}\t#{pane_dead}\t#{pane_pid}');
+          assert.equal(tmuxCommands[mutationIndex - 1], 'show-option -qv -p -t %31 @omx_team_pane_owner_id');
         }
       }
       assert.ok(tmuxCommands.some((command) => command.startsWith('split-window -v -t %21 ')));

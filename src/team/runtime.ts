@@ -2429,6 +2429,7 @@ async function terminateExactPaneProcessTree(
   expectedPanePid?: number,
   graceMs: number = PROMPT_WORKER_SIGTERM_WAIT_MS,
   killWaitMs: number = PROMPT_WORKER_SIGKILL_WAIT_MS,
+  authorizePaneEffect?: (paneId: string, pid: number) => boolean,
 ): Promise<ExactPaneProcessTreeTeardown> {
   const authorization = readExactPaneProofSync(paneId);
   if (authorization.status === 'unavailable') return { terminated: false, stopped: true, trackedPids: [], proofUnavailable: authorization };
@@ -2438,6 +2439,21 @@ async function terminateExactPaneProcessTree(
       status: 'unavailable', paneId, reason: 'pane_pid_changed', detail: `expected ${expectedPanePid}, got ${authorization.pid}`,
     } };
   }
+  if (authorizePaneEffect && !authorizePaneEffect(paneId, authorization.pid)) {
+    return {
+      terminated: false,
+      stopped: true,
+      trackedPids: [],
+      authorizedPanePid: authorization.pid,
+      proofUnavailable: {
+        status: 'unavailable',
+        paneId,
+        reason: 'pane_pid_changed',
+        detail: 'pane owner authorization changed',
+      },
+    };
+  }
+
 
   const trackedPids = collectProcessTreePids(authorization.pid);
   if (trackedPids.length === 0) return { terminated: true, stopped: false, trackedPids, authorizedPanePid: authorization.pid };
@@ -2446,6 +2462,22 @@ async function terminateExactPaneProcessTree(
   // ordinary successful teardown depend on /proc availability.
   const trackedProcessIdentities = await captureProcessIdentities(trackedPids) ?? undefined;
   for (const pid of trackedPids) {
+    if (authorizePaneEffect && !authorizePaneEffect(paneId, authorization.pid)) {
+      return {
+        terminated: false,
+        stopped: true,
+        trackedPids,
+        trackedProcessIdentities,
+        authorizedPanePid: authorization.pid,
+        proofUnavailable: {
+          status: 'unavailable',
+          paneId,
+          reason: 'pane_pid_changed',
+          detail: 'pane owner authorization changed',
+        },
+      };
+    }
+
     const signal = signalExactPaneProcess(paneId, authorization.pid, pid, 'SIGTERM');
     if (signal.status === 'unavailable') return { terminated: false, stopped: true, trackedPids, trackedProcessIdentities, authorizedPanePid: authorization.pid, proofUnavailable: signal.proof };
     if (signal.status === 'stopped') return { terminated: false, stopped: true, trackedPids, trackedProcessIdentities, authorizedPanePid: authorization.pid };
@@ -2457,6 +2489,21 @@ async function terminateExactPaneProcessTree(
     if (probe.status === 'unavailable') return { terminated: false, stopped: true, trackedPids, trackedProcessIdentities, authorizedPanePid: authorization.pid, proofUnavailable: probe.proof };
     if (probe.status === 'stopped') return { terminated: false, stopped: true, trackedPids, trackedProcessIdentities, authorizedPanePid: authorization.pid };
     if (probe.status === 'gone') continue;
+    if (authorizePaneEffect && !authorizePaneEffect(paneId, authorization.pid)) {
+      return {
+        terminated: false,
+        stopped: true,
+        trackedPids,
+        trackedProcessIdentities,
+        authorizedPanePid: authorization.pid,
+        proofUnavailable: {
+          status: 'unavailable',
+          paneId,
+          reason: 'pane_pid_changed',
+          detail: 'pane owner authorization changed',
+        },
+      };
+    }
     const signal = signalExactPaneProcess(paneId, authorization.pid, pid, 'SIGKILL');
     if (signal.status === 'unavailable') return { terminated: false, stopped: true, trackedPids, trackedProcessIdentities, authorizedPanePid: authorization.pid, proofUnavailable: signal.proof };
     if (signal.status === 'stopped') return { terminated: false, stopped: true, trackedPids, trackedProcessIdentities, authorizedPanePid: authorization.pid };
@@ -3087,6 +3134,17 @@ export async function startTeam(
   let sessionCreated = false;
   const createdWorkerPaneIds: string[] = [];
   let createdLeaderPaneId: string | undefined;
+  // A returned interactive session has successfully tagged these panes. Rollback
+  // must retain that ownership authorization through its final kill proof.
+  const startupTaggedPaneOwnerIds = new Map<string, string>();
+  const authorizeStartupRollbackPaneEffect = (paneId: string): boolean => {
+    const expectedOwnerId = startupTaggedPaneOwnerIds.get(paneId);
+    if (!expectedOwnerId) return true;
+    const currentOwner = readPaneTeamOwnerTagResult(paneId);
+    return currentOwner.status === 'value' && currentOwner.value === expectedOwnerId;
+  };
+
+
   let config: TeamConfig | null = null;
   const workerPaneIds = Array.from({ length: workerCount }, () => undefined as string | undefined);
   const workerReadyTimeoutMs = resolveWorkerReadyTimeoutMs(launchEnv);
@@ -3428,6 +3486,21 @@ export async function startTeam(
       createdWorkerPaneIds.push(...createdSession.workerPaneIds);
       createdLeaderPaneId = createdSession.leaderPaneId;
       applyCreatedInteractiveSessionToConfig(config, createdSession, workerPaneIds);
+      const createdOwnerId = typeof createdSession.teamPaneOwnerId === 'string'
+        ? createdSession.teamPaneOwnerId.trim()
+        : '';
+      if (createdOwnerId) {
+        for (const paneId of [
+          createdSession.leaderPaneId,
+          ...createdSession.workerPaneIds,
+          createdSession.hudPaneId,
+        ]) {
+          if (typeof paneId === 'string' && paneId.trim().startsWith('%')) {
+            startupTaggedPaneOwnerIds.set(paneId, createdOwnerId);
+          }
+        }
+      }
+
       for (const [index, paneId] of createdSession.workerPaneIds.entries()) {
         startupTiming.mark('split_returned', { worker: `worker-${index + 1}`, pane_id: paneId });
       }
@@ -3720,6 +3793,9 @@ export async function startTeam(
           const teardown = await terminateExactPaneProcessTree(
             paneId,
             config?.workers.find((worker) => worker.pane_id === paneId)?.pid,
+            undefined,
+            undefined,
+            authorizeStartupRollbackPaneEffect,
           );
           if (teardown.proofUnavailable) {
             if (config) await persistGonePaneDescendantCleanupDebt({ teamName: sanitized, cwd: leaderCwd, config, paneId, teardown });
@@ -3755,6 +3831,7 @@ export async function startTeam(
         const rollbackPaneTeardown = await teardownWorkerPanes(rollbackPaneIds, {
           leaderPaneId: createdLeaderPaneId,
           expectedPanePids: rollbackPanePids,
+          authorizePaneKill: (paneId) => authorizeStartupRollbackPaneEffect(paneId),
         });
         const resolvedRollbackPaneIds = new Set([
           ...rollbackPaneTeardown.provenGonePaneIds,

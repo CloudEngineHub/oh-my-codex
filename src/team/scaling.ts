@@ -575,6 +575,11 @@ export async function scaleUp(
     }
 
     const addedWorkers: WorkerInfo[] = [];
+    // Only panes whose Team tag command completed may be authorized by owner
+    // continuity during rollback. Untagged legacy panes retain existing PID-only
+    // cleanup semantics.
+    const rollbackTaggedPaneOwnerIds = new Map<string, string>();
+
     const createdTaskIds: string[] = [];
 
     const provisionedWorktrees: EnsureWorktreeResult[] = [];
@@ -656,6 +661,12 @@ export async function scaleUp(
           expectedPanePids: Object.fromEntries(rollbackWorkers
             .filter((worker) => typeof worker.pane_id === 'string' && typeof worker.pid === 'number')
             .map((worker) => [worker.pane_id as string, worker.pid as number])),
+          authorizePaneKill: (paneId) => {
+            const expectedOwnerId = rollbackTaggedPaneOwnerIds.get(paneId);
+            if (!expectedOwnerId) return true;
+            const currentOwner = readPaneTeamOwnerTagResult(paneId);
+            return currentOwner.status === 'value' && currentOwner.value === expectedOwnerId;
+          },
         });
         for (const paneId of [...paneTeardown.provenGonePaneIds, ...paneTeardown.killedPaneIds]) resolvedPaneIds.add(paneId);
         for (const paneId of paneTeardown.kill.failedPaneIds) unresolvedPaneIds.add(paneId);
@@ -1064,6 +1075,7 @@ export async function scaleUp(
       if (config.tmux_pane_owner_id) {
         try {
           tagPaneTeamOwner(paneProof.paneId, config.tmux_pane_owner_id, paneProof.pid);
+          rollbackTaggedPaneOwnerIds.set(paneProof.paneId, config.tmux_pane_owner_id.trim());
         } catch (error) {
           return await rollbackScaleUp(
             `Failed to tag tmux pane for ${workerName}: ${error instanceof Error ? error.message : String(error)}`,

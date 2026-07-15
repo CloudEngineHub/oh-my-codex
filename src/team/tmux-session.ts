@@ -37,7 +37,7 @@ import {
   spawnPlatformCommandSync,
 } from '../utils/platform-command.js';
 import { resolveOmxCliEntryPath } from '../utils/paths.js';
-import { readExactPaneProof, readExactPaneProofSync, readExactPaneProofsSync, type ExactPaneProof } from './exact-pane.js';
+import { readExactPaneProof, readExactPaneProofSync, type ExactPaneProof } from './exact-pane.js';
 
 const execFileAsync = promisify(execFile);
 import { HUD_RESIZE_RECONCILE_DELAY_SECONDS, HUD_TMUX_TEAM_HEIGHT_LINES } from '../hud/constants.js';
@@ -411,9 +411,29 @@ function listPanesResult(target: string): PaneListResult {
  * target-scoped topology read rejects foreign/new panes; one global snapshot
  * then pins every surviving pane identity immediately before the effect.
  */
+/**
+ * Re-prove an explicitly Team-owned pane immediately before an effect. The
+ * double PID proof keeps ownership and process identity continuous across an
+ * untrusted tmux option read.
+ */
+function requireLiveTeamOwnedPaneSync(
+  paneId: string,
+  expectedPanePid: number,
+  expectedTeamOwnerId: string,
+): string {
+  const target = requireLiveExactPaneSync(paneId, expectedPanePid);
+  const owner = readPaneTeamOwnerTagResult(target);
+  if (owner.status !== 'value' || owner.value !== expectedTeamOwnerId) {
+    const detail = owner.status === 'error' ? owner.error : 'missing';
+    throw new Error(`tmux pane team owner changed: ${target}: ${detail}`);
+  }
+  return requireLiveExactPaneSync(target, expectedPanePid);
+}
+
 function requireFrozenWindowTopologySync(
   teamTarget: string,
   expectedPanePids: ReadonlyMap<string, number>,
+  expectedPaneOwners?: ReadonlyMap<string, string>,
 ): void {
   const topology = listPanesResult(teamTarget);
   if (topology.error) throw new Error(`failed to read tmux pane topology: ${topology.error}`);
@@ -424,13 +444,14 @@ function requireFrozenWindowTopologySync(
     throw new Error('tmux window topology changed before layout mutation');
   }
 
-  const paneIds = [...expectedPanePids.keys()];
-  const proofs = readExactPaneProofsSync(paneIds);
-  for (const proof of proofs) {
-    if (proof.status === 'unavailable') throw new ExactPaneProofUnavailableError(proof);
-    if (proof.status === 'gone') throw new Error(`tmux pane is not proven live: ${proof.paneId}`);
-    if (proof.pid !== expectedPanePids.get(proof.paneId)) {
-      throw new Error(`tmux pane identity changed: ${proof.paneId}`);
+  for (const [paneId, expectedPanePid] of expectedPanePids) {
+    const expectedOwner = expectedPaneOwners?.get(paneId);
+    if (expectedOwner) requireLiveTeamOwnedPaneSync(paneId, expectedPanePid, expectedOwner);
+    else {
+      const proof = readExactPaneProofSync(paneId);
+      if (proof.status === 'unavailable') throw new ExactPaneProofUnavailableError(proof);
+      if (proof.status === 'gone') throw new Error(`tmux pane is not proven live: ${proof.paneId}`);
+      if (proof.pid !== expectedPanePid) throw new Error(`tmux pane identity changed: ${proof.paneId}`);
     }
   }
 }
@@ -974,10 +995,14 @@ export function buildReconcileHudResizeArgs(
   return ['run-shell', buildBestEffortShellCommand(buildAuthoritativeHudResizeShellCommand(hudPaneId, heightLines, expectedPanePid))];
 }
 
-function redrawLeaderPaneAfterTeamLayout(leaderPaneId: string, expectedPanePid: number): void {
+function redrawLeaderPaneAfterTeamLayout(
+  leaderPaneId: string,
+  expectedPanePid: number,
+  expectedTeamOwnerId: string,
+): void {
   const target = leaderPaneId.trim();
   if (!target.startsWith('%')) return;
-  const provenTarget = requireLiveExactPaneSync(target, expectedPanePid);
+  const provenTarget = requireLiveTeamOwnedPaneSync(target, expectedPanePid, expectedTeamOwnerId);
   runTmux(['send-keys', '-t', provenTarget, 'C-l']);
 }
 
@@ -1902,6 +1927,7 @@ export function createTeamSession(
     let rightStackRootPaneId: string | null = null;
     let rightStackRootPanePid: number | null = null;
     const frozenWindowPanePids = new Map<string, number>([[leaderPaneId, leaderPanePid]]);
+    const frozenWindowPaneOwners = new Map<string, string>([[leaderPaneId, teamPaneOwnerId]]);
 
     for (let i = 1; i <= workerCount; i++) {
       const startup = workerStartups[i - 1] || {};
@@ -1931,9 +1957,10 @@ export function createTeamSession(
       );
       // First split creates the right side from leader. Remaining splits stack on the right.
       const splitDirection = i === 1 ? '-h' : '-v';
-      const splitTarget = requireLiveExactPaneSync(
+      const splitTarget = requireLiveTeamOwnedPaneSync(
         i === 1 ? leaderPaneId : (rightStackRootPaneId ?? leaderPaneId),
         i === 1 ? leaderPanePid : (rightStackRootPanePid ?? leaderPanePid),
+        teamPaneOwnerId,
       );
 
       const split = runTmux([
@@ -1971,6 +1998,7 @@ export function createTeamSession(
       }
       tagPaneInstance(paneId, ownerSessionId, panePid);
       tagPaneTeamOwner(paneId, teamPaneOwnerId, panePid);
+      frozenWindowPaneOwners.set(paneId, teamPaneOwnerId);
       workerPaneIds.push(paneId);
       if (i === 1) {
         rightStackRootPaneId = paneId;
@@ -1980,7 +2008,7 @@ export function createTeamSession(
     }
 
     // Keep leader as full left/main pane; workers stay stacked on the right.
-    requireFrozenWindowTopologySync(teamTarget, frozenWindowPanePids);
+    requireFrozenWindowTopologySync(teamTarget, frozenWindowPanePids, frozenWindowPaneOwners);
     runTmux(['select-layout', '-t', teamTarget, 'main-vertical']);
 
     // Force leader pane to use half the window width.
@@ -1989,9 +2017,9 @@ export function createTeamSession(
       const width = Number.parseInt(windowWidthResult.stdout.split('\n')[0]?.trim() || '', 10);
       if (Number.isFinite(width) && width >= 40) {
         const half = String(Math.floor(width / 2));
-        requireFrozenWindowTopologySync(teamTarget, frozenWindowPanePids);
+        requireFrozenWindowTopologySync(teamTarget, frozenWindowPanePids, frozenWindowPaneOwners);
         runTmux(['set-window-option', '-t', teamTarget, 'main-pane-width', half]);
-        requireFrozenWindowTopologySync(teamTarget, frozenWindowPanePids);
+        requireFrozenWindowTopologySync(teamTarget, frozenWindowPanePids, frozenWindowPaneOwners);
         runTmux(['select-layout', '-t', teamTarget, 'main-vertical']);
       }
     }
@@ -2006,7 +2034,7 @@ export function createTeamSession(
     if (canRecreateTeamHud && omxEntry) {
       const hudCmd = `exec env ${formatHudEnvAssignments(process.env, { sessionId: ownerSessionId, leaderPaneId })} node ${shellQuoteSingle(translatePathForMsys(omxEntry))} hud --watch`;
       const hudCwd = translatePathForMsys(cwd);
-      requireFrozenWindowTopologySync(teamTarget, frozenWindowPanePids);
+      requireFrozenWindowTopologySync(teamTarget, frozenWindowPanePids, frozenWindowPaneOwners);
       const hudSplitTarget = leaderPaneId;
 
       const hudResult = runTmux([
@@ -2028,11 +2056,12 @@ export function createTeamSession(
           }
           tagPaneInstance(id, ownerSessionId, hudPanePid);
           tagPaneTeamOwner(id, teamPaneOwnerId, hudPanePid);
+          frozenWindowPaneOwners.set(id, teamPaneOwnerId);
           hudPaneId = id;
 
 
           if (isNativeWindows()) {
-            const provenHudPaneId = requireLiveExactPaneSync(hudPaneId, hudPanePid);
+            const provenHudPaneId = requireLiveTeamOwnedPaneSync(hudPaneId, hudPanePid, teamPaneOwnerId);
             const reconcile = runTmux(buildHudResizeArgs(provenHudPaneId));
 
             if (!reconcile.ok) {
@@ -2041,6 +2070,7 @@ export function createTeamSession(
           } else {
             const hookTarget = buildResizeHookTarget(sessionName, windowIndex);
             const hookName = buildResizeHookName(safeTeamName, sessionName, windowIndex, hudPaneId);
+            requireLiveTeamOwnedPaneSync(hudPaneId, hudPanePid, teamPaneOwnerId);
             const registerHook = runTmux(buildRegisterResizeHookArgs(hookTarget, hookName, hudPaneId, HUD_TMUX_TEAM_HEIGHT_LINES, hudPanePid));
 
             const clientAttachedHookName = buildClientAttachedReconcileHookName(
@@ -2059,6 +2089,7 @@ export function createTeamSession(
                   + 'continuing with best-effort HUD resize fallback.',
               );
             }
+            requireLiveTeamOwnedPaneSync(hudPaneId, hudPanePid, teamPaneOwnerId);
             const registerClientAttachedHook = runTmux(
               buildRegisterClientAttachedReconcileArgs(hookTarget, clientAttachedHookName, hudPaneId, HUD_TMUX_TEAM_HEIGHT_LINES, hudPanePid),
             );
@@ -2072,11 +2103,13 @@ export function createTeamSession(
               );
             }
 
+            requireLiveTeamOwnedPaneSync(hudPaneId, hudPanePid, teamPaneOwnerId);
             const delayed = runTmux(buildScheduleDelayedHudResizeArgs(hudPaneId, HUD_RESIZE_RECONCILE_DELAY_SECONDS, HUD_TMUX_TEAM_HEIGHT_LINES, hudPanePid));
 
             if (!delayed.ok) {
               console.warn(`[omx] tmux delayed HUD resize unavailable for ${hudPaneId}: ${delayed.stderr}; continuing.`);
             }
+            requireLiveTeamOwnedPaneSync(hudPaneId, hudPanePid, teamPaneOwnerId);
             const reconcile = runTmux(buildReconcileHudResizeArgs(hudPaneId, HUD_TMUX_TEAM_HEIGHT_LINES, hudPanePid));
 
             if (!reconcile.ok) {
@@ -2087,8 +2120,8 @@ export function createTeamSession(
       }
     }
 
-    runTmux(['select-pane', '-t', requireLiveExactPaneSync(leaderPaneId, leaderPanePid)]);
-    redrawLeaderPaneAfterTeamLayout(leaderPaneId, leaderPanePid);
+    runTmux(['select-pane', '-t', requireLiveTeamOwnedPaneSync(leaderPaneId, leaderPanePid, teamPaneOwnerId)]);
+    redrawLeaderPaneAfterTeamLayout(leaderPaneId, leaderPanePid, teamPaneOwnerId);
 
     sleepSeconds(0.5);
 

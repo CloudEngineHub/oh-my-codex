@@ -62,6 +62,17 @@ const skipSlowLifecycleUnderCoverage = coverageRun
   ? 'covered by the team-state-runtime lane; skipped under c8 to keep the coverage gate bounded around slow process-lifecycle waits'
   : false;
 
+const tmuxOwnerProofShim = `
+if [ "\${1:-}" = "set-option" ] && [ "\${5:-}" = "@omx_team_pane_owner_id" ]; then
+  printf '%s' "\${6:-}" > "$0.owner-\${4#%}"
+fi
+if [ "\${1:-}" = "show-option" ] && [ "\${6:-}" = "@omx_team_pane_owner_id" ]; then
+  owner_path="$0.owner-\${5#%}"
+  [ -f "$owner_path" ] && cat "$owner_path"
+  exit 0
+fi
+`;
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -1586,6 +1597,12 @@ case "$1" in
     printf 'OpenAI Codex\\n> '
     exit 0
     ;;
+  show-option)
+    case "$*" in
+      *"@omx_team_pane_owner_id"*) [ -f "$owner_path" ] && cat "$owner_path" ;;
+    esac
+    exit 0
+    ;;
   set-option)
     if [ "\${5:-}" = "@omx_team_pane_owner_id" ]; then printf '%s' "\${6:-}" > "$owner_path"; fi
     exit 0
@@ -1763,6 +1780,12 @@ case "$1" in
     ;;
   capture-pane)
     printf 'OpenAI Codex\\n> '
+    exit 0
+    ;;
+  show-option)
+    case "$*" in
+      *"@omx_team_pane_owner_id"*) [ -f "$owner_path" ] && cat "$owner_path" ;;
+    esac
     exit 0
     ;;
   set-option)
@@ -2218,6 +2241,12 @@ case "\${1:-}" in
     esac
     exit 0
     ;;
+  show-option)
+    case "$*" in
+      *"@omx_team_pane_owner_id"*) [ -f "$owner_path" ] && cat "$owner_path" ;;
+    esac
+    exit 0
+    ;;
   set-option)
     if [ "\${5:-}" = "@omx_team_pane_owner_id" ]; then printf '%s' "\${6:-}" > "$owner_path"; fi
     exit 0
@@ -2375,9 +2404,8 @@ case "\${1:-}" in
     ;;
   show-option)
     case "$*" in
-      *)
-        exit 1
-        ;;
+      *"@omx_team_pane_owner_id"*) [ -f "$owner_path" ] && cat "$owner_path" ;;
+      *) exit 1 ;;
     esac
     exit 0
     ;;
@@ -2535,6 +2563,7 @@ case "\${1:-}" in
         echo "%2"
         ;;
       *)
+        rm -f "${tmuxLogPath}.killed-%3";
         : > "${tmuxLogPath}.hud-created"
         echo "%3"
         ;;
@@ -2543,6 +2572,12 @@ case "\${1:-}" in
     ;;
   kill-pane)
     : > "${tmuxLogPath}.killed-$3"
+    exit 0
+    ;;
+  show-option)
+    case "$*" in
+      *"@omx_team_pane_owner_id"*) [ -f "$owner_path" ] && cat "$owner_path" ;;
+    esac
     exit 0
     ;;
   set-option)
@@ -2712,6 +2747,7 @@ esac
           dirPrefix: 'omx-runtime-interactive-mcp-cleanup-bin-',
           tmuxScript: (tmuxLogPath) => `#!/bin/sh
 set -eu
+${tmuxOwnerProofShim}
 printf '%s\n' "$*" >> "${tmuxLogPath}"
 case "\${1:-}" in
   -V)
@@ -2840,6 +2876,7 @@ esac
           dirPrefix: 'omx-runtime-pane-pid-bin-',
           tmuxScript: (tmuxLogPath) => `#!/bin/sh
 set -eu
+${tmuxOwnerProofShim}
 printf '%s\n' "$*" >> "${tmuxLogPath}"
 case "\${1:-}" in
   -V)
@@ -2979,6 +3016,7 @@ esac
           dirPrefix: 'omx-runtime-startup-pane-pid-reuse-bin-',
           tmuxScript: (tmuxLogPath) => `#!/bin/sh
 set -eu
+${tmuxOwnerProofShim}
 printf '%s\\n' "$*" >> "${tmuxLogPath}"
 case "\${1:-}" in
   -V)
@@ -3111,6 +3149,7 @@ esac
           dirPrefix: 'omx-runtime-startup-direct-fast-bin-',
           tmuxScript: () => `#!/bin/sh
 set -eu
+${tmuxOwnerProofShim}
 order_file="${cwd}/startup-order.log"
 count_file="${cwd}/startup-capture-count"
 case "$1" in
@@ -3245,6 +3284,7 @@ esac
           dirPrefix: 'omx-runtime-ready-prompt-evidence-bin-',
           tmuxScript: () => `#!/bin/sh
 set -eu
+${tmuxOwnerProofShim}
 count_file="${cwd}/capture-count"
 case "$1" in
   -V)
@@ -3397,6 +3437,7 @@ esac
           dirPrefix: 'omx-runtime-ready-timeout-no-evidence-bin-',
           tmuxScript: (tmuxLogPath) => `#!/bin/sh
 set -eu
+${tmuxOwnerProofShim}
 printf '%s\\n' "$*" >> "${tmuxLogPath}"
 case "$1" in
   -V)
@@ -3521,6 +3562,7 @@ esac
           dirPrefix: 'omx-runtime-parallel-ready-bin-',
           tmuxScript: () => `#!/bin/sh
 set -eu
+${tmuxOwnerProofShim}
 order_file="${cwd}/ready-order.log"
 case "$1" in
   -V)
@@ -3686,6 +3728,7 @@ esac
           dirPrefix: 'omx-runtime-no-startup-evidence-bin-',
           tmuxScript: (tmuxLogPath) => `#!/bin/sh
 set -eu
+${tmuxOwnerProofShim}
 printf '%s\\n' "$*" >> "${tmuxLogPath}"
 case "$1" in
   -V)
@@ -3869,6 +3912,7 @@ process.on('SIGTERM', () => process.exit(0));
           dirPrefix: 'omx-runtime-parallel-dead-pane-bin-',
           tmuxScript: () => `#!/bin/sh
 set -eu
+${tmuxOwnerProofShim}
 order_file="${cwd}/dead-pane-order.log"
 case "$1" in
   --version|-V)
@@ -4062,6 +4106,7 @@ esac
           dirPrefix: 'omx-runtime-dead-startup-pane-bin-',
           tmuxScript: () => `#!/bin/sh
 set -eu
+${tmuxOwnerProofShim}
 case "$1" in
   -V)
     echo "tmux 3.4"
@@ -4228,6 +4273,7 @@ esac
           dirPrefix: 'omx-runtime-partial-create-proof-bin-',
           tmuxScript: (tmuxLogPath) => `#!/bin/sh
 set -eu
+${tmuxOwnerProofShim}
 printf '%s\\n' "$*" >> "${tmuxLogPath}"
 case "$1" in
   -V)
@@ -4343,6 +4389,7 @@ esac
           dirPrefix: 'omx-runtime-no-resource-create-proof-bin-',
           tmuxScript: (tmuxLogPath) => `#!/bin/sh
 set -eu
+${tmuxOwnerProofShim}
 printf '%s\\n' "$*" >> "${tmuxLogPath}"
 case "$1" in
   -V)
@@ -4364,7 +4411,7 @@ case "$1" in
         if [ -f "$count_file" ]; then count=$(cat "$count_file"); fi
         count=$((count + 1))
         printf '%s' "$count" > "$count_file"
-        if [ "$count" -le 5 ]; then
+        if [ "$count" -le 6 ]; then
           printf "%%1\t0\t2000000001\n%%2\t0\t2000004242\n"
         else
           printf 'not-a-pane-snapshot\n'
@@ -4448,6 +4495,7 @@ esac
           dirPrefix: 'omx-runtime-materialize-before-evidence-bin-',
           tmuxScript: (tmuxLogPath) => `#!/bin/sh
 set -eu
+${tmuxOwnerProofShim}
 printf '%s\\n' "$*" >> "${tmuxLogPath}"
 case "$1" in
   -V)
@@ -5291,6 +5339,9 @@ case "\${1:-}" in
   show-option)
     case "$*" in
       *"-p -t %1 @omx_team_pane_owner_id"*)
+        echo "team:team-rerun-hud-6aa4d480"
+        ;;
+      *"-p -t %2 @omx_team_pane_owner_id"*)
         echo "team:team-rerun-hud-6aa4d480"
         ;;
       *"-p -t %3 @omx_team_pane_owner_id"*)

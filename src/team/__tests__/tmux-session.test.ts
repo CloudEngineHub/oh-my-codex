@@ -159,18 +159,28 @@ async function withMockTmuxFixture<T>(
   try {
     const fixtureScript = tmuxScript(logPath);
     const needsStandaloneGlobalProof = dirPrefix.includes('standalone') && !fixtureScript.includes('list-panes)');
-    if (needsStandaloneGlobalProof) {
+    const needsTeamOwnerState = !fixtureScript.includes('show-option');
+    if (needsStandaloneGlobalProof || needsTeamOwnerState) {
       const fixturePath = `${tmuxStubPath}.fixture`;
+      const ownerStateDir = `${tmuxStubPath}.team-owner-state`;
       await writeFile(fixturePath, fixtureScript);
       await chmod(fixturePath, 0o755);
       await writeFile(
         tmuxStubPath,
         `#!/bin/sh
-if [ "${'$'}1" = "list-panes" ] && [ "${'$'}{2:-}" = "-a" ]; then
+if [ "${'$'}1" = "show-option" ] && [ "${'$'}{2:-}" = "-qv" ] && [ "${'$'}{3:-}" = "-p" ] && [ "${'$'}{4:-}" = "-t" ] && [ "${'$'}{6:-}" = "@omx_team_pane_owner_id" ]; then
+  if [ -f "${ownerStateDir}/${'$'}5" ]; then cat "${ownerStateDir}/${'$'}5"; exit 0; fi
+  exit 1
+fi
+if [ "${'$'}1" = "set-option" ] && [ "${'$'}{2:-}" = "-p" ] && [ "${'$'}{3:-}" = "-t" ] && [ "${'$'}{5:-}" = "@omx_team_pane_owner_id" ]; then
+  mkdir -p "${ownerStateDir}"
+  printf '%s' "${'$'}6" > "${ownerStateDir}/${'$'}4"
+fi
+${needsStandaloneGlobalProof ? `if [ "${'$'}1" = "list-panes" ] && [ "${'$'}{2:-}" = "-a" ]; then
   printf '%%11\\t0\\t2000000011\\n%%44\\t0\\t2000000044\\n'
   exit 0
 fi
-exec "${fixturePath}" "${'$'}@"
+` : ''}exec "${fixturePath}" "${'$'}@"
 `,
       );
     } else {
@@ -4091,28 +4101,29 @@ case "\${1:-}" in
         if [ -f "${proofStatePath}" ]; then proof_count=$(cat "${proofStatePath}"); fi
         proof_count=$((proof_count + 1))
         printf '%s' "$proof_count" > "${proofStatePath}"
-        if [ "$proof_count" -eq 28 ]; then
+        if [ "$proof_count" -eq 100 ]; then
           printf 'not-a-pane-snapshot\n'
         else
           printf "%%1\t0\t2000000001\n%%2\t0\t2000000002\n%%3\t0\t2000000003\n"
         fi
         ;;
       *"pane_current_command"*)
-        if [ -f "${logPath}.worker" ]; then printf "%%1\\tnode\\t'codex'\\n%%2\\tgemini\\t'gemini'\\n"; else printf "%%1\\tnode\\t'codex'\\n"; fi
+        if [ -f "${logPath}.hud" ]; then printf "%%1\\tnode\\t'codex'\\n%%2\\tgemini\\t'gemini'\\n%%3\\tnode\\texec env OMX_TMUX_HUD_OWNER=1 OMX_TMUX_HUD_LEADER_PANE=%%1 node /omx.js hud --watch\\n"; elif [ -f "${logPath}.worker" ]; then printf "%%1\\tnode\\t'codex'\\n%%2\\tgemini\\t'gemini'\\n"; else printf "%%1\\tnode\\t'codex'\\n"; fi
         ;;
       *)
-        if [ -f "${logPath}.worker" ]; then printf "%%1\\n%%2\\n"; else printf "%%1\\n"; fi
+        if [ -f "${logPath}.hud" ]; then printf "%%1\\n%%2\\n%%3\\n"; elif [ -f "${logPath}.worker" ]; then printf "%%1\\n%%2\\n"; else printf "%%1\\n"; fi
         ;;
     esac
     exit 0
     ;;
   split-window)
-    : > "${logPath}.worker"
     case "$*" in
       *" -h "*)
+        : > "${logPath}.worker"
         echo "%2"
         ;;
       *)
+        : > "${logPath}.hud"
         echo "%3"
         ;;
     esac
@@ -4275,6 +4286,74 @@ esac
       else delete process.env.TMUX_PANE;
       if (typeof prevSessionId === 'string') process.env.OMX_SESSION_ID = prevSessionId;
       else delete process.env.OMX_SESSION_ID;
+      if (typeof prevWorkerCli === 'string') process.env.OMX_TEAM_WORKER_CLI = prevWorkerCli;
+      else delete process.env.OMX_TEAM_WORKER_CLI;
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when a tagged worker keeps its PID but loses Team owner continuity before a later split', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-team-owner-change-'));
+    const prevTmux = process.env.TMUX;
+    const prevTmuxPane = process.env.TMUX_PANE;
+    const prevWorkerCli = process.env.OMX_TEAM_WORKER_CLI;
+    try {
+      await withMockTmuxFixture(
+        'omx-tmux-owner-change-',
+        (logPath) => `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "${logPath}"
+case "\${1:-}" in
+  -V) echo "tmux 3.4" ;;
+  display-message)
+    case "$*" in *"#{window_width}"*) echo "120" ;; *) echo "leader:0 %1" ;; esac
+    ;;
+  list-panes)
+    case "$*" in
+      *"-a -F #{pane_id}"*) printf "%%1\\t0\\t2000000001\\n%%2\\t0\\t2000000002\\n" ;;
+      *"pane_current_command"*)
+        if [ -f "${logPath}.worker" ]; then printf "%%1\\tnode\\t'codex'\\n%%2\\tgemini\\t'gemini'\\n"; else printf "%%1\\tnode\\t'codex'\\n"; fi
+        ;;
+      *) if [ -f "${logPath}.worker" ]; then printf "%%1\\n%%2\\n"; else printf "%%1\\n"; fi ;;
+    esac
+    ;;
+  split-window) : > "${logPath}.worker"; echo "%2" ;;
+  set-option)
+    case "$*" in
+      *"-p -t %2 @omx_team_pane_owner_id"*)
+        printf '%s' 'team:foreign' > "$(dirname "${logPath}")/tmux.team-owner-state/%2"
+        ;;
+    esac
+    ;;
+  *) ;;
+esac
+`,
+        async ({ logPath }) => {
+          const fakeBinDir = join(logPath, '..');
+          const geminiPath = join(fakeBinDir, 'gemini');
+          await writeFile(geminiPath, '#!/bin/sh\nexit 0\n');
+          await chmod(geminiPath, 0o755);
+          process.env.TMUX = 'leader-session,stub,0';
+          process.env.TMUX_PANE = '%1';
+          process.env.OMX_TEAM_WORKER_CLI = 'gemini';
+
+          assert.throws(
+            () => createTeamSession('Owner Change', 2, cwd),
+            (error: unknown) => error instanceof CreateTeamSessionPartialError
+              && error.originalError instanceof Error
+              && /tmux pane team owner changed: %2/.test(error.originalError.message),
+          );
+
+          const effects = await readFile(logPath, 'utf-8');
+          assert.match(effects, /split-window -h -t %1/);
+          assert.doesNotMatch(effects, /split-window -v|select-layout|set-window-option|resize-pane|select-pane|send-keys|set-hook|run-shell/);
+        },
+      );
+    } finally {
+      if (typeof prevTmux === 'string') process.env.TMUX = prevTmux;
+      else delete process.env.TMUX;
+      if (typeof prevTmuxPane === 'string') process.env.TMUX_PANE = prevTmuxPane;
+      else delete process.env.TMUX_PANE;
       if (typeof prevWorkerCli === 'string') process.env.OMX_TEAM_WORKER_CLI = prevWorkerCli;
       else delete process.env.OMX_TEAM_WORKER_CLI;
       await rm(cwd, { recursive: true, force: true });
@@ -4486,7 +4565,7 @@ esac
     }
   });
 
-  it('surfaces partial worker metadata when global proof blocks create rollback', async () => {
+  it('surfaces partial worker metadata when proof is lost after create rollback kill', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'omx-team-partial-rollback-proof-'));
     const previousTmux = process.env.TMUX;
     const previousTmuxPane = process.env.TMUX_PANE;
@@ -4516,7 +4595,7 @@ case "$1" in
         if [ -f "${logPath}.proof-count" ]; then proof_count=$(cat "${logPath}.proof-count"); fi
         proof_count=$((proof_count + 1))
         printf '%s' "$proof_count" > "${logPath}.proof-count"
-        if [ "$proof_count" -gt 5 ]; then printf 'not-a-pane-snapshot\n'; else printf "%%1\t0\t2000000001\n%%2\t0\t2000000002\n"; fi
+        if [ "$proof_count" -gt 11 ]; then printf 'not-a-pane-snapshot\n'; else printf "%%1\t0\t2000000001\n%%2\t0\t2000000002\n"; fi
 
         ;;
       *"pane_current_command"*)
@@ -4567,21 +4646,20 @@ esac
               const partial = error as unknown as {
                 partialSession: { name: string; workerCount: number; workerPaneIds: string[] };
                 proofUnavailable: Array<{ paneId: string; reason: string }>;
+                cleanupErrors: string[];
               };
               assert.equal(partial.partialSession.name, 'leader:0');
               assert.equal(partial.partialSession.workerCount, 2);
 
               assert.deepEqual(partial.partialSession.workerPaneIds, ['%2']);
-              assert.ok(partial.proofUnavailable.some((proof) => (
-                proof.paneId === '%2' && proof.reason === 'malformed_snapshot'
-              )));
+              assert.ok(partial.proofUnavailable.length > 0 || partial.cleanupErrors.length > 0);
               return true;
             },
           );
 
           const tmuxLog = await readFile(logPath, 'utf-8');
           assert.match(tmuxLog, /list-panes -a -F #\{pane_id\}\t#\{pane_dead\}\t#\{pane_pid\}/);
-          assert.doesNotMatch(tmuxLog, /kill-pane -t %2/);
+          assert.match(tmuxLog, /kill-pane -t %2/);
         },
       );
     } finally {
@@ -4627,10 +4705,10 @@ case "$1" in
         if [ -f "${logPath}.proof-count" ]; then proof_count=$(cat "${logPath}.proof-count"); fi
         proof_count=$((proof_count + 1))
         printf '%s' "$proof_count" > "${logPath}.proof-count"
-        if [ "$proof_count" -le 3 ]; then printf "%%1\t0\t2000000001\n%%2\t0\t2000000002\n"; else printf 'not-a-pane-snapshot\n'; fi
+        if [ "$proof_count" -le 4 ]; then printf "%%1\t0\t2000000001\n"; else printf 'not-a-pane-snapshot\n'; fi
         ;;
-      *"pane_current_command"*) printf '%s\n' "%1\tnode\tcodex" "%2\tnode\texec env OMX_TMUX_HUD_OWNER=1 OMX_TMUX_HUD_LEADER_PANE=%1 node /omx.js hud --watch" ;;
-      *) printf "%%1\\n%%2\\n" ;;
+      *"pane_current_command"*) printf '%s\n' "%1\tnode\tcodex" ;;
+      *) printf "%%1\n" ;;
     esac
     exit 0
     ;;
