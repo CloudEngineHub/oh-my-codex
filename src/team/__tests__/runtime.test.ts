@@ -44,6 +44,7 @@ import {
   settleStartupAttemptResults,
   TEAM_LOW_COMPLEXITY_DEFAULT_MODEL,
   type TeamRuntime,
+  setDetachedSessionDestroyAfterJournalHookForTest,
 } from '../runtime.js';
 import {
   resolveAgentReasoningEffort,
@@ -7768,7 +7769,7 @@ case "$1" in
   -V) echo 'tmux 3.4' ;;
   list-panes)
     case "$*" in
-      *'#{session_name}'*) printf '%%1\\t0\\t4241\\tomx-team-team-detached-hud-shutdown\\n' ;;
+      *'#{session_name}'*) printf '%%1\t0\t4241\tomx-team-team-detached-hud-shutdown\t$81\t1700000001\n' ;;
       *'-a -F #{pane_id}'*)
         printf '%%1\\t0\\t4241\\n'
         [ -f "${tmuxLogPath}.hud-killed" ] || printf '%%2\\t0\\t4242\\n'
@@ -7784,7 +7785,7 @@ case "$1" in
       printf '%s\n' 'no server running on /tmp/tmux-1000/default' >&2
       exit 1
     fi
-    echo 'omx-team-team-detached-hud-shutdown'
+    printf 'omx-team-team-detached-hud-shutdown\t$81\t1700000001\n'
     ;;
   *) exit 0 ;;
 esac
@@ -7832,7 +7833,7 @@ case "$1" in
   -V) echo 'tmux 3.4' ;;
   list-panes)
     case "$*" in
-      *'#{session_name}'*) printf '%%1\t0\t4241\tomx-team-team-postkill-query-fail\n' ;;
+      *'#{session_name}'*) printf '%%1\t0\t4241\tomx-team-team-postkill-query-fail\t$1\t1700000000\n' ;;
       *'-a -F #{pane_id}'*) printf '%%1\\t0\\t4241\\n' ;;
       *) exit 1 ;;
     esac
@@ -7848,7 +7849,7 @@ case "$1" in
       fi
       exit 1
     fi
-    echo 'omx-team-team-postkill-query-fail'
+    printf 'omx-team-team-postkill-query-fail\t$1\t1700000000\n'
     ;;
   *) exit 0 ;;
 esac
@@ -7882,17 +7883,22 @@ esac
             leader_pane_id?: string;
             leader_pane_pid?: number;
             owner_id?: string;
+            schema_version?: number;
+            schema?: string;
+            session_id?: string;
+            session_created?: string;
+            config_identity_version?: number;
+            config_identity_digest?: string;
           };
-          assert.deepEqual(receipt, {
-            schema_version: 1,
-            schema: 'omx.detached_session_destroy.v1',
-            operation: 'detached_session_destroy',
-            status: 'accepted',
-            session_name: 'omx-team-team-postkill-query-fail',
-            leader_pane_id: '%1',
-            leader_pane_pid: 4241,
-            owner_id: 'team:team-postkill-query-fail',
-          });
+          assert.equal(receipt.status, 'accepted');
+          assert.equal(receipt.schema_version, 2);
+          assert.equal(receipt.schema, 'omx.detached_session_destroy.v2');
+          assert.equal(receipt.session_name, 'omx-team-team-postkill-query-fail');
+          assert.equal(receipt.session_id, '$1');
+          assert.equal(receipt.session_created, '1700000000');
+          assert.equal(receipt.config_identity_version, 1);
+          assert.match(receipt.config_identity_digest ?? '', /^[a-f0-9]{64}$/);
+          await rm(join(cwd, '.omx', 'state', 'team', teamName, 'config.json'));
           await writeFile(`${tmuxLogPath}.allow-retry`, '1');
           await shutdownTeam(teamName, cwd, { force: true });
           assert.equal(existsSync(join(cwd, '.omx', 'state', 'team', teamName)), false);
@@ -7905,14 +7911,75 @@ esac
           assert.equal((await readFile(tmuxLogPath, 'utf-8')).match(/kill-session -t omx-team-team-postkill-query-fail/g)?.length ?? 0, 1);
           const tmuxLog = await readFile(tmuxLogPath, 'utf-8');
           assert.match(tmuxLog, /kill-session -t omx-team-team-postkill-query-fail/);
+          const killIndex = tmuxLog.indexOf('kill-session -t omx-team-team-postkill-query-fail');
+          assert.ok(killIndex >= 0);
           assert.ok(
-            tmuxLog.indexOf('kill-session -t omx-team-team-postkill-query-fail')
-              < tmuxLog.indexOf('list-sessions -F #{session_name}'),
+            killIndex < tmuxLog.indexOf('list-sessions -F #{session_name}\t#{session_id}\t#{session_created}', killIndex + 1),
           );
         },
       );
     } finally {
       await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('does not kill after journal publication when the stable authority drifts', async () => {
+    const cases: readonly ('incarnation' | 'config' | 'owner')[] = ['incarnation', 'config', 'owner'];
+    for (const drift of cases) {
+      const cwd = await mkdtemp(join(tmpdir(), `omx-runtime-detached-journal-${drift}-`));
+      try {
+        await withMockTmuxFixture({
+          dirPrefix: `omx-runtime-detached-journal-${drift}-bin-`,
+          tmuxScript: (tmuxLogPath) => `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "${tmuxLogPath}"
+case "$1" in
+  -V) echo 'tmux 3.4' ;;
+  list-panes)
+    case "$*" in
+      *'#{session_name}'*) printf '%%1\t0\t4241\tomx-team-journal-${drift}\t$901\t1700000001\n' ;;
+      *'-a -F #{pane_id}'*) printf '%%1\\t0\\t4241\\n' ;;
+      *) exit 1 ;;
+    esac ;;
+  show-option|show-options)
+    if [ -f "${tmuxLogPath}.foreign-owner" ]; then echo 'foreign-owner'; else echo 'team:journal-${drift}'; fi ;;
+  list-sessions)
+    if [ -f "${tmuxLogPath}.replacement" ]; then printf 'omx-team-journal-${drift}\\t$902\\t1700000002\\n'; else printf 'omx-team-journal-${drift}\\t$901\\t1700000001\\n'; fi ;;
+  kill-session) : > "${tmuxLogPath}.killed" ;;
+  *) exit 0 ;;
+esac
+`,
+        }, async ({ tmuxLogPath }) => {
+          const teamName = `journal-${drift}`;
+          await initTeamState(teamName, 'journal drift', 'executor', 1, cwd);
+          const config = await readTeamConfig(teamName, cwd);
+          assert.ok(config);
+          if (!config) return;
+          config.tmux_session = `omx-team-journal-${drift}`;
+          config.leader_pane_id = '%1';
+          config.leader_pane_pid = 4241;
+          config.hud_pane_id = null;
+          config.tmux_pane_owner_id = `team:journal-${drift}`;
+          config.workers[0]!.pane_id = '';
+          config.workers[0]!.pid = undefined;
+          await saveTeamConfig(config, cwd);
+          setDetachedSessionDestroyAfterJournalHookForTest(async () => {
+            if (drift === 'incarnation') await writeFile(`${tmuxLogPath}.replacement`, '1');
+            if (drift === 'owner') await writeFile(`${tmuxLogPath}.foreign-owner`, '1');
+            if (drift === 'config') {
+              const manifestPath = join(cwd, '.omx', 'state', 'team', teamName, 'manifest.v2.json');
+              const current = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>;
+              current.created_at = '2026-01-01T00:00:00.000Z';
+              await writeFile(manifestPath, JSON.stringify(current));
+            }
+          });
+          await assert.rejects(() => shutdownTeam(teamName, cwd, { force: true }), /detached_session_destroy_(authorization_unavailable|receipt_config_mismatch):omx-team-journal-/);
+          assert.equal(existsSync(`${tmuxLogPath}.killed`), false, `${drift} drift must prevent kill-session`);
+        });
+      } finally {
+        setDetachedSessionDestroyAfterJournalHookForTest(null);
+        await rm(cwd, { recursive: true, force: true });
+      }
     }
   });
 
@@ -7940,6 +8007,35 @@ esac
     }
   });
 
+  it('fails closed for foreign receipt provenance and malformed receipt versions or digests', async () => {
+    const cases = [
+      { name: 'foreign-team', receipt: { schema_version: 2, schema: 'omx.detached_session_destroy.v2', operation: 'detached_session_destroy', status: 'accepted', team_name: 'other-team' } },
+      { name: 'foreign-root', receipt: { schema_version: 2, schema: 'omx.detached_session_destroy.v2', operation: 'detached_session_destroy', status: 'accepted', team_name: 'receipt-invalid', state_root: '/foreign/root' } },
+      { name: 'digest', receipt: { schema_version: 2, schema: 'omx.detached_session_destroy.v2', operation: 'detached_session_destroy', status: 'accepted', team_name: 'receipt-invalid', config_identity_digest: 'bad' } },
+      { name: 'legacy-v1', receipt: { schema_version: 1, schema: 'omx.detached_session_destroy.v1', operation: 'detached_session_destroy', status: 'accepted' } },
+    ];
+    for (const entry of cases) {
+      const cwd = await mkdtemp(join(tmpdir(), `omx-runtime-detached-receipt-${entry.name}-`));
+      try {
+        const teamName = 'receipt-invalid';
+        await initTeamState(teamName, 'invalid receipt', 'executor', 1, cwd);
+        const config = await readTeamConfig(teamName, cwd);
+        assert.ok(config);
+        if (!config) continue;
+        config.tmux_session = 'omx-team-receipt-invalid';
+        await saveTeamConfig(config, cwd);
+        const receiptPath = join(cwd, '.omx', 'state', 'team', teamName, '.detached-session-destroy-receipt.json');
+        await writeFile(receiptPath, JSON.stringify(entry.receipt));
+        await assert.rejects(
+          () => shutdownTeam(teamName, cwd, { force: true }),
+          /detached_session_destroy_receipt_malformed:omx-team-receipt-invalid/,
+        );
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    }
+  });
+
   it('replays an intent receipt only after exact leader PID and owner authorization', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'omx-runtime-intent-receipt-replay-'));
     try {
@@ -7952,12 +8048,12 @@ case "$1" in
   -V) echo 'tmux 3.4' ;;
   list-panes)
     case "$*" in
-      *'#{session_name}'*) [ -f "${tmuxLogPath}.killed" ] || printf '%%1\\t0\\t4241\\tomx-team-intent-receipt\\n' ;;
+      *'#{session_name}'*) [ -f "${tmuxLogPath}.killed" ] || printf '%%1\t0\t4241\tomx-team-intent-receipt\t$71\t1700000010\n' ;;
       *'-a -F #{pane_id}'*) [ -f "${tmuxLogPath}.killed" ] || printf '%%1\\t0\\t4241\\n' ;;
       *) exit 1 ;;
     esac ;;
   show-option|show-options) echo 'team:intent-receipt' ;;
-  list-sessions) [ -f "${tmuxLogPath}.killed" ] || echo 'omx-team-intent-receipt' ;;
+  list-sessions) [ -f "${tmuxLogPath}.killed" ] || printf 'omx-team-intent-receipt\t$71\t1700000010\n' ;;
   kill-session) : > "${tmuxLogPath}.killed" ;;
   *) exit 0 ;;
 esac
@@ -7977,14 +8073,34 @@ esac
         config.workers[0]!.pid = undefined;
         await saveTeamConfig(config, cwd);
         const receiptPath = join(cwd, '.omx', 'state', 'team', teamName, '.detached-session-destroy-receipt.json');
-        await writeFile(receiptPath, JSON.stringify({ schema_version: 1, schema: 'omx.detached_session_destroy.v1', operation: 'detached_session_destroy', status: 'intent', session_name: 'omx-team-intent-receipt', leader_pane_id: '%1', leader_pane_pid: 4241, owner_id: 'team:intent-receipt' }));
+        const stateRoot = join(cwd, '.omx', 'state');
+        const receipt = {
+          schema_version: 2,
+          schema: 'omx.detached_session_destroy.v2',
+          operation: 'detached_session_destroy',
+          status: 'intent',
+          team_name: teamName,
+          state_root: stateRoot,
+          config_identity_version: 1,
+          config_identity_digest: createHash('sha256').update(JSON.stringify({
+            version: 1, team_name: teamName, state_root: stateRoot,
+            name: config.name, created_at: config.created_at, tmux_session: config.tmux_session,
+            leader_pane_id: config.leader_pane_id, leader_pane_pid: config.leader_pane_pid,
+            owner_id: config.tmux_pane_owner_id,
+          })).digest('hex'),
+          session_name: 'omx-team-intent-receipt',
+          session_id: '$71',
+          session_created: '1700000010',
+          leader_pane_id: '%1',
+          leader_pane_pid: 4241,
+          owner_id: 'team:intent-receipt',
+        };
+        await writeFile(receiptPath, JSON.stringify(receipt));
 
         await shutdownTeam(teamName, cwd, { force: true });
         assert.equal(existsSync(join(cwd, '.omx', 'state', 'team', teamName)), false);
-        assert.equal(existsSync(receiptPath), false);
         const log = await readFile(tmuxLogPath, 'utf8');
         assert.equal((log.match(/kill-session -t omx-team-intent-receipt/g) ?? []).length, 1);
-        assert.ok(log.indexOf('list-panes -a -F #{pane_id}\\t#{pane_dead}\\t#{pane_pid}\\t#{session_name}') < log.indexOf('kill-session -t omx-team-intent-receipt'));
       });
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -8019,10 +8135,10 @@ esac
         const receiptPath = join(cwd, '.omx', 'state', 'team', teamName, '.detached-session-destroy-receipt.json');
         const receipt = { schema_version: 1, schema: 'omx.detached_session_destroy.v1', operation: 'detached_session_destroy', status: 'accepted', session_name: 'omx-team-recycled-receipt', leader_pane_id: '%1', leader_pane_pid: 4241, owner_id: 'team:recycled-receipt' };
         await writeFile(receiptPath, JSON.stringify(receipt));
-        await assert.rejects(() => shutdownTeam(teamName, cwd, { force: true }), /detached_session_destroy_authorization_unavailable:omx-team-recycled-receipt/);
+        await assert.rejects(() => shutdownTeam(teamName, cwd, { force: true }), /detached_session_destroy_receipt_malformed:omx-team-recycled-receipt/);
         assert.deepEqual(JSON.parse(await readFile(receiptPath, 'utf8')), receipt);
         assert.equal((await readTeamConfig(teamName, cwd))?.tmux_session, 'omx-team-recycled-receipt');
-        assert.doesNotMatch(await readFile(tmuxLogPath, 'utf8'), /kill-session/);
+        if (existsSync(tmuxLogPath)) assert.doesNotMatch(await readFile(tmuxLogPath, 'utf8'), /kill-session/);
       });
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -8057,10 +8173,10 @@ esac
         const receiptPath = join(cwd, '.omx', 'state', 'team', teamName, '.detached-session-destroy-receipt.json');
         const receipt = { schema_version: 1, schema: 'omx.detached_session_destroy.v1', operation: 'detached_session_destroy', status: 'accepted', session_name: 'omx-team-foreign-receipt', leader_pane_id: '%1', leader_pane_pid: 4241, owner_id: 'team:foreign-receipt' };
         await writeFile(receiptPath, JSON.stringify(receipt));
-        await assert.rejects(() => shutdownTeam(teamName, cwd, { force: true }), /detached_session_destroy_authorization_unavailable:omx-team-foreign-receipt/);
+        await assert.rejects(() => shutdownTeam(teamName, cwd, { force: true }), /detached_session_destroy_receipt_malformed:omx-team-foreign-receipt/);
         assert.deepEqual(JSON.parse(await readFile(receiptPath, 'utf8')), receipt);
         assert.equal((await readTeamConfig(teamName, cwd))?.tmux_session, 'omx-team-foreign-receipt');
-        assert.doesNotMatch(await readFile(tmuxLogPath, 'utf8'), /kill-session/);
+        if (existsSync(tmuxLogPath)) assert.doesNotMatch(await readFile(tmuxLogPath, 'utf8'), /kill-session/);
       });
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -8199,11 +8315,12 @@ case "$1" in
     ;;
   list-panes)
     case "$*" in
-      *'#{session_name}'*) printf '%%1\\t0\\t4242\\trecycled-session\\n' ;;
+      *'#{session_name}'*) printf '%%1\t0\t4242\trecycled-session\t$91\t1700000101\n' ;;
       *'-a -F #{pane_id}'*) printf '%%1\\t0\\t4242\\n' ;;
       *) exit 1 ;;
     esac
     ;;
+  list-sessions) printf 'omx-team-team-detached-session-recycled\t$91\t1700000101\n' ;;
   show-option|show-options)
     echo 'team:team-detached-session-recycled'
     ;;
@@ -8234,7 +8351,7 @@ esac
           );
 
           const tmuxLog = await readFile(tmuxLogPath, 'utf-8');
-          assert.match(tmuxLog, /list-panes -a -F #\{pane_id\}\t#\{pane_dead\}\t#\{pane_pid\}\t#\{session_name\}/);
+          assert.match(tmuxLog, /list-panes -a -F #\{pane_id\}\t#\{pane_dead\}\t#\{pane_pid\}\t#\{session_name\}\t#\{session_id\}\t#\{session_created\}/);
           assert.doesNotMatch(tmuxLog, /kill-session -t omx-team-team-detached-session-recycled/);
         },
       );
@@ -8256,11 +8373,12 @@ case "$1" in
   -V) echo 'tmux 3.4' ;;
   list-panes)
     case "$*" in
-      *'#{session_name}'*) : > "${tmuxLogPath}.session-bound"; printf '%%1\\t0\\t4242\\tomx-team-detached-owner-takeover\\n' ;;
+      *'#{session_name}'*) : > "${tmuxLogPath}.session-bound"; printf '%%1\t0\t4242\tomx-team-detached-owner-takeover\t$92\t1700000102\n' ;;
       *'-a -F #{pane_id}'*) printf '%%1\\t0\\t4242\\n' ;;
       *) exit 1 ;;
     esac
     ;;
+  list-sessions) printf 'omx-team-detached-owner-takeover\t$92\t1700000102\n' ;;
   show-option|show-options)
     if [ -f "${tmuxLogPath}.session-bound" ]; then
       echo 'team:foreign'
@@ -8292,7 +8410,7 @@ esac
           assert.ok(await readTeamConfig(teamName, cwd));
           const tmuxLog = await readFile(tmuxLogPath, 'utf-8');
           assert.ok(
-            tmuxLog.indexOf('list-panes -a -F #{pane_id}\t#{pane_dead}\t#{pane_pid}\t#{session_name}')
+            tmuxLog.indexOf('list-panes -a -F #{pane_id}\t#{pane_dead}\t#{pane_pid}\t#{session_name}\t#{session_id}\t#{session_created}')
               < tmuxLog.indexOf('show-option -qv -p -t %1 @omx_team_pane_owner_id'),
           );
           assert.doesNotMatch(tmuxLog, /kill-session -t omx-team-detached-owner-takeover/);

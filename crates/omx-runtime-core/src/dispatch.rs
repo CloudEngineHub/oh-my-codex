@@ -42,6 +42,9 @@ pub enum DispatchError {
     DuplicateRequestId {
         request_id: String,
     },
+    InvalidRequestId {
+        request_id: String,
+    },
     NotFound {
         request_id: String,
     },
@@ -57,6 +60,9 @@ impl fmt::Display for DispatchError {
         match self {
             Self::DuplicateRequestId { request_id } => {
                 write!(f, "duplicate dispatch request id: {request_id}")
+            }
+            Self::InvalidRequestId { request_id } => {
+                write!(f, "invalid dispatch request id: {request_id:?}")
             }
             Self::NotFound { request_id } => {
                 write!(f, "dispatch record not found: {request_id}")
@@ -93,6 +99,9 @@ impl DispatchLog {
         metadata: Option<serde_json::Value>,
     ) -> Result<(), DispatchError> {
         let request_id = request_id.into();
+        if request_id.is_empty() {
+            return Err(DispatchError::InvalidRequestId { request_id });
+        }
         if self
             .records
             .iter()
@@ -169,6 +178,10 @@ impl DispatchLog {
 
     pub fn records(&self) -> &[DispatchRecord] {
         &self.records
+    }
+
+    pub fn request_ids(&self) -> impl Iterator<Item = &str> {
+        self.records.iter().map(|record| record.request_id.as_str())
     }
 
     /// Remove records that have reached a terminal delivery state.
@@ -384,5 +397,14 @@ mod tests {
             matches!(err, DispatchError::DuplicateRequestId { request_id } if request_id == "req-1")
         );
         assert_eq!(log.records().len(), 1);
+    }
+
+    #[test]
+    fn queue_rejects_empty_request_id() {
+        let mut log = DispatchLog::new();
+        assert!(matches!(
+            log.queue("", "worker", None),
+            Err(DispatchError::InvalidRequestId { request_id }) if request_id.is_empty()
+        ));
     }
 }

@@ -45,6 +45,7 @@ import {
   teardownWorkerPanes,
   listTeamSessions,
   destroyTeamSession,
+  queryDetachedTeamSession,
 
   resolveTeamWorkerCli,
   resolveTeamWorkerLaunchMode,
@@ -3623,6 +3624,71 @@ esac
       async () => {
         assert.deepEqual(listTeamSessions(), []);
       },
+    );
+  });
+
+  it('classifies detached tmux incarnation evidence strictly', async () => {
+    const cases = [
+      { name: 'exact', output: 'omx-team-incarnation\t$41\t1700000001', expected: { status: 'exact', incarnation: { sessionId: '$41', sessionCreated: '1700000001' } } },
+      { name: 'session-id replacement', output: 'omx-team-incarnation\t$42\t1700000001', expected: { status: 'replacement', incarnation: { sessionId: '$42', sessionCreated: '1700000001' } } },
+      { name: 'creation replacement', output: 'omx-team-incarnation\t$41\t1700000002', expected: { status: 'replacement', incarnation: { sessionId: '$41', sessionCreated: '1700000002' } } },
+    ] as const;
+    for (const entry of cases) {
+      await withMockTmuxFixture(
+        `omx-detached-incarnation-${entry.name.replaceAll(' ', '-')}-`,
+        () => `#!/bin/sh
+case "$1" in
+  list-sessions) printf '%s\\n' '${entry.output}' ;;
+  *) exit 1 ;;
+esac
+`,
+        async () => {
+          assert.deepEqual(
+            queryDetachedTeamSession('omx-team-incarnation', { sessionId: '$41', sessionCreated: '1700000001' }),
+            entry.expected,
+          );
+        },
+      );
+    }
+  });
+
+  it('treats malformed and unavailable detached incarnation evidence as unavailable', async () => {
+    await withMockTmuxFixture(
+      'omx-detached-incarnation-malformed-',
+      () => `#!/bin/sh
+case "$1" in
+  list-sessions) printf '%s\\n' 'omx-team-incarnation\\t$41' ;;
+  *) exit 1 ;;
+esac
+`,
+      async () => assert.deepEqual(queryDetachedTeamSession('omx-team-incarnation'), {
+        status: 'unavailable', detail: 'malformed_session_incarnation',
+      }),
+    );
+    await withMockTmuxFixture(
+      'omx-detached-incarnation-unavailable-',
+      () => `#!/bin/sh
+case "$1" in
+  list-sessions) printf '%s\\n' 'permission denied' >&2; exit 1 ;;
+  *) exit 1 ;;
+esac
+`,
+      async () => assert.deepEqual(queryDetachedTeamSession('omx-team-incarnation'), {
+        status: 'unavailable', detail: 'permission denied',
+      }),
+    );
+  });
+
+  it('recognizes authoritative detached-session absence', async () => {
+    await withMockTmuxFixture(
+      'omx-detached-incarnation-absence-',
+      () => `#!/bin/sh
+case "$1" in
+  list-sessions) exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+      async () => assert.deepEqual(queryDetachedTeamSession('omx-team-incarnation'), { status: 'absent' }),
     );
   });
 

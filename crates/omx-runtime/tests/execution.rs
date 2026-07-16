@@ -289,6 +289,19 @@ fn exec_compact_immediately_persists_only_nonterminal_dispatch_records() {
         true,
     );
 
+    let duplicate = Command::new(env!("CARGO_BIN_EXE_omx-runtime"))
+        .args([
+            "exec",
+            r#"{"command":"QueueDispatch","request_id":"failed","target":"replacement"}"#,
+            &state_arg,
+        ])
+        .output()
+        .expect("ran duplicate dispatch exec");
+    assert!(!duplicate.status.success());
+    assert!(String::from_utf8_lossy(&duplicate.stderr)
+        .contains("duplicate dispatch request id: failed"));
+    assert!(dir.join("dispatch-seen.json").exists());
+
     let dispatch: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(dir.join("dispatch.json")).expect("read immediate dispatch view"),
     )
@@ -345,5 +358,49 @@ fn exec_compact_immediately_persists_only_nonterminal_dispatch_records() {
         .filter_map(|event| event["request_id"].as_str())
         .collect();
     assert_eq!(event_request_ids, vec!["pending", "notified", "notified"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn concurrent_exec_queue_accepts_exactly_one_request_id() {
+    let dir = std::env::temp_dir().join("omx-runtime-test-concurrent-dispatch-id");
+    let _ = std::fs::remove_dir_all(&dir);
+    let state_arg = format!("--state-dir={}", dir.display());
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let mut workers = Vec::new();
+    for target in ["worker-a", "worker-b"] {
+        let barrier = std::sync::Arc::clone(&barrier);
+        let state_arg = state_arg.clone();
+        workers.push(std::thread::spawn(move || {
+            barrier.wait();
+            Command::new(env!("CARGO_BIN_EXE_omx-runtime"))
+                .args([
+                    "exec",
+                    &format!(
+                        r#"{{"command":"QueueDispatch","request_id":"concurrent","target":"{target}"}}"#
+                    ),
+                    &state_arg,
+                ])
+                .output()
+                .expect("ran concurrent dispatch exec")
+                .status
+                .success()
+        }));
+    }
+    barrier.wait();
+    assert_eq!(
+        workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .filter(|accepted| *accepted)
+            .count(),
+        1
+    );
+    let dispatch: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join("dispatch.json")).expect("read dispatch view"),
+    )
+    .expect("valid dispatch JSON");
+    assert_eq!(dispatch["records"].as_array().unwrap().len(), 1);
+    assert_eq!(dispatch["records"][0]["request_id"], "concurrent");
     let _ = std::fs::remove_dir_all(&dir);
 }

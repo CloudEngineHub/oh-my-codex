@@ -1,7 +1,10 @@
+use std::collections::BTreeSet;
 use std::fmt;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use fs2::FileExt;
+use serde::{Deserialize, Serialize};
 
 use crate::authority::{AuthorityError, AuthorityLease};
 use crate::dispatch::{DispatchError, DispatchLog};
@@ -77,17 +80,29 @@ impl From<serde_json::Error> for EngineError {
 pub struct RuntimeEngine {
     authority: AuthorityLease,
     dispatch: DispatchLog,
+    seen_dispatch_ids: BTreeSet<String>,
     mailbox: MailboxLog,
     replay: ReplayState,
     event_log: Vec<RuntimeEvent>,
     state_dir: Option<PathBuf>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DispatchSeenLedger {
+    schema_version: u32,
+    request_ids: Vec<String>,
+}
+
+const DISPATCH_SEEN_LEDGER_SCHEMA_VERSION: u32 = 1;
+const DISPATCH_SEEN_LEDGER_FILE: &str = "dispatch-seen.json";
+
 impl RuntimeEngine {
     pub fn new() -> Self {
         Self {
             authority: AuthorityLease::new(),
             dispatch: DispatchLog::new(),
+            seen_dispatch_ids: BTreeSet::new(),
             mailbox: MailboxLog::new(),
             replay: ReplayState::new(),
             event_log: Vec::new(),
@@ -131,8 +146,12 @@ impl RuntimeEngine {
                 target,
                 metadata,
             } => {
+                if self.seen_dispatch_ids.contains(&request_id) {
+                    return Err(DispatchError::DuplicateRequestId { request_id }.into());
+                }
                 self.dispatch
                     .queue(&request_id, &target, metadata.clone())?;
+                self.seen_dispatch_ids.insert(request_id.clone());
                 RuntimeEvent::DispatchQueued {
                     request_id,
                     target,
@@ -254,6 +273,11 @@ impl RuntimeEngine {
         let snapshot_json = serde_json::to_string_pretty(&self.snapshot())?;
         std::fs::write(dir.join("snapshot.json"), snapshot_json)?;
 
+        // Publish the permanent dispatch identity ledger before any compaction/removal
+        // can make its corresponding events unavailable. A crash can conservatively
+        // retain extra IDs, but can never make an accepted ID reusable.
+        persist_dispatch_seen_ledger(dir, &self.seen_dispatch_ids)?;
+
         let events_json = serde_json::to_string_pretty(&self.event_log)?;
         std::fs::write(dir.join("events.json"), events_json)?;
 
@@ -313,13 +337,46 @@ impl RuntimeEngine {
         let mailbox = std::fs::read_to_string(dir.join("mailbox.json"))
             .ok()
             .and_then(|mailbox_json| serde_json::from_str::<MailboxLog>(&mailbox_json).ok());
+        let ledger = match std::fs::read_to_string(dir.join(DISPATCH_SEEN_LEDGER_FILE)) {
+            Ok(json) => Some(parse_dispatch_seen_ledger(&json)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        let persisted_dispatch_ids = match std::fs::read_to_string(dir.join("dispatch.json")) {
+            Ok(json) => {
+                let dispatch: DispatchLog = serde_json::from_str(&json)?;
+                collect_unique_dispatch_ids(dispatch.request_ids())?
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeSet::new(),
+            Err(error) => return Err(error.into()),
+        };
 
         drop(lock_file);
 
         let mut engine = Self::new().with_state_dir(&dir);
-        // Replay all events to rebuild state
+        // Replay all events to rebuild state. Duplicate/out-of-order dispatch history
+        // is rejected by replay, rather than silently repaired.
         for event in &events {
             replay_event(&mut engine, event)?;
+        }
+        let authoritative_dispatch_ids = collect_legacy_dispatch_ids(&events)?;
+        match ledger {
+            Some(seen_dispatch_ids) => {
+                if !authoritative_dispatch_ids.is_subset(&seen_dispatch_ids)
+                    || !persisted_dispatch_ids.is_subset(&seen_dispatch_ids)
+                {
+                    return Err(DispatchError::InvalidRequestId {
+                        request_id: "dispatch seen ledger omits an authoritative dispatch id"
+                            .into(),
+                    }
+                    .into());
+                }
+                engine.seen_dispatch_ids = seen_dispatch_ids;
+            }
+            None => {
+                engine.seen_dispatch_ids = collect_legacy_dispatch_ids(&events)?;
+                engine.seen_dispatch_ids.extend(persisted_dispatch_ids);
+            }
         }
 
         if let Some(mailbox_state) = mailbox {
@@ -343,12 +400,10 @@ impl RuntimeEngine {
                     }
                 }
             }
-
             engine.mailbox = mailbox_state;
         }
 
         engine.event_log = events;
-
         Ok(engine)
     }
 }
@@ -357,6 +412,82 @@ impl Default for RuntimeEngine {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn persist_dispatch_seen_ledger(
+    dir: &Path,
+    seen_dispatch_ids: &BTreeSet<String>,
+) -> Result<(), EngineError> {
+    let ledger = DispatchSeenLedger {
+        schema_version: DISPATCH_SEEN_LEDGER_SCHEMA_VERSION,
+        request_ids: seen_dispatch_ids.iter().cloned().collect(),
+    };
+    let path = dir.join(DISPATCH_SEEN_LEDGER_FILE);
+    let temporary_path = dir.join(format!("{DISPATCH_SEEN_LEDGER_FILE}.tmp"));
+    let json = serde_json::to_vec_pretty(&ledger)?;
+    let mut temporary_file = std::fs::File::create(&temporary_path)?;
+    temporary_file.write_all(&json)?;
+    temporary_file.sync_all()?;
+    std::fs::rename(temporary_path, path)?;
+    Ok(())
+}
+
+fn parse_dispatch_seen_ledger(json: &str) -> Result<BTreeSet<String>, EngineError> {
+    let ledger: DispatchSeenLedger = serde_json::from_str(json)?;
+    if ledger.schema_version != DISPATCH_SEEN_LEDGER_SCHEMA_VERSION {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "unsupported dispatch seen ledger schema version",
+        )
+        .into());
+    }
+    collect_unique_dispatch_ids(ledger.request_ids.iter().map(String::as_str))
+}
+
+fn collect_unique_dispatch_ids<'a>(
+    request_ids: impl Iterator<Item = &'a str>,
+) -> Result<BTreeSet<String>, EngineError> {
+    let mut seen = BTreeSet::new();
+    for request_id in request_ids {
+        if request_id.is_empty() {
+            return Err(DispatchError::InvalidRequestId {
+                request_id: request_id.to_string(),
+            }
+            .into());
+        }
+        if !seen.insert(request_id.to_string()) {
+            return Err(DispatchError::DuplicateRequestId {
+                request_id: request_id.to_string(),
+            }
+            .into());
+        }
+    }
+    Ok(seen)
+}
+
+fn collect_queued_dispatch_ids(events: &[RuntimeEvent]) -> Result<BTreeSet<String>, EngineError> {
+    collect_unique_dispatch_ids(events.iter().filter_map(|event| match event {
+        RuntimeEvent::DispatchQueued { request_id, .. } => Some(request_id.as_str()),
+        _ => None,
+    }))
+}
+
+fn collect_legacy_dispatch_ids(events: &[RuntimeEvent]) -> Result<BTreeSet<String>, EngineError> {
+    let mut seen_dispatch_ids = collect_queued_dispatch_ids(events)?;
+    for event in events {
+        if let RuntimeEvent::DispatchRecordsRemoved { request_ids } = event {
+            for request_id in request_ids {
+                if request_id.is_empty() {
+                    return Err(DispatchError::InvalidRequestId {
+                        request_id: request_id.clone(),
+                    }
+                    .into());
+                }
+                seen_dispatch_ids.insert(request_id.clone());
+            }
+        }
+    }
+    Ok(seen_dispatch_ids)
 }
 
 fn dispatch_event_matches_request_ids(
@@ -1072,6 +1203,268 @@ mod tests {
         let reloaded = RuntimeEngine::load(&dir).unwrap();
         assert_eq!(reloaded.snapshot().backlog, engine.snapshot().backlog);
         assert_eq!(reloaded.event_log(), engine.event_log());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn compacted_and_removed_dispatch_ids_remain_permanently_reserved_after_reload() {
+        let dir = std::env::temp_dir().join("omx-runtime-test-dispatch-seen-ledger");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut engine = RuntimeEngine::new().with_state_dir(&dir);
+        for request_id in ["compacted", "removed", "unrelated"] {
+            engine
+                .process(RuntimeCommand::QueueDispatch {
+                    request_id: request_id.into(),
+                    target: format!("worker-{request_id}"),
+                    metadata: None,
+                })
+                .unwrap();
+        }
+        engine
+            .process(RuntimeCommand::MarkFailed {
+                request_id: "compacted".into(),
+                reason: "unavailable".into(),
+            })
+            .unwrap();
+        engine.compact();
+        engine
+            .process(RuntimeCommand::RemoveDispatchRecords {
+                request_ids: vec!["removed".into()],
+            })
+            .unwrap();
+        engine.persist().unwrap();
+
+        let mut loaded = RuntimeEngine::load(&dir).unwrap();
+        assert_eq!(loaded.snapshot().backlog.pending, 1);
+        for request_id in ["compacted", "removed"] {
+            assert!(matches!(
+                loaded
+                    .process(RuntimeCommand::QueueDispatch {
+                        request_id: request_id.into(),
+                        target: "replacement".into(),
+                        metadata: None,
+                    })
+                    .unwrap_err(),
+                EngineError::Dispatch(DispatchError::DuplicateRequestId { .. })
+            ));
+        }
+        loaded
+            .process(RuntimeCommand::MarkFailed {
+                request_id: "unrelated".into(),
+                reason: "unavailable".into(),
+            })
+            .unwrap();
+        assert_eq!(loaded.snapshot().backlog.failed, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_rejects_malformed_or_duplicate_dispatch_seen_ledger() {
+        let cases = [
+            ("malformed", r#"{"schema_version":1,"request_ids":"req-1"}"#),
+            (
+                "duplicate",
+                r#"{"schema_version":1,"request_ids":["req-1","req-1"]}"#,
+            ),
+            ("unknown-schema", r#"{"schema_version":2,"request_ids":[]}"#),
+            ("empty-id", r#"{"schema_version":1,"request_ids":[""]}"#),
+        ];
+        for (name, ledger) in cases {
+            let dir = std::env::temp_dir().join(format!("omx-runtime-test-seen-ledger-{name}"));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("events.json"), "[]").unwrap();
+            std::fs::write(dir.join(DISPATCH_SEEN_LEDGER_FILE), ledger).unwrap();
+            assert!(RuntimeEngine::load(&dir).is_err());
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn legacy_state_derives_seen_ids_and_persists_them_on_next_write() {
+        let dir = std::env::temp_dir().join("omx-runtime-test-legacy-dispatch-seen");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let events = vec![RuntimeEvent::DispatchQueued {
+            request_id: "legacy".into(),
+            target: "worker-legacy".into(),
+            metadata: None,
+        }];
+        std::fs::write(
+            dir.join("events.json"),
+            serde_json::to_string(&events).unwrap(),
+        )
+        .unwrap();
+        let mut loaded = RuntimeEngine::load(&dir).unwrap();
+        assert!(matches!(
+            loaded
+                .process(RuntimeCommand::QueueDispatch {
+                    request_id: "legacy".into(),
+                    target: "replacement".into(),
+                    metadata: None,
+                })
+                .unwrap_err(),
+            EngineError::Dispatch(DispatchError::DuplicateRequestId { .. })
+        ));
+        loaded.persist().unwrap();
+        assert!(dir.join(DISPATCH_SEEN_LEDGER_FILE).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn removal_reserves_ids_immediately_and_after_reload() {
+        let dir = std::env::temp_dir().join("omx-runtime-test-remove-reserves-id");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut engine = RuntimeEngine::new().with_state_dir(&dir);
+        for request_id in ["removed", "kept"] {
+            engine
+                .process(RuntimeCommand::QueueDispatch {
+                    request_id: request_id.into(),
+                    target: format!("worker-{request_id}"),
+                    metadata: None,
+                })
+                .unwrap();
+        }
+        engine
+            .process(RuntimeCommand::RemoveDispatchRecords {
+                request_ids: vec!["removed".into()],
+            })
+            .unwrap();
+        assert!(matches!(
+            engine
+                .process(RuntimeCommand::QueueDispatch {
+                    request_id: "removed".into(),
+                    target: "replacement".into(),
+                    metadata: None,
+                })
+                .unwrap_err(),
+            EngineError::Dispatch(DispatchError::DuplicateRequestId { .. })
+        ));
+        engine.persist().unwrap();
+        let mut loaded = RuntimeEngine::load(&dir).unwrap();
+        assert!(matches!(
+            loaded
+                .process(RuntimeCommand::QueueDispatch {
+                    request_id: "removed".into(),
+                    target: "replacement".into(),
+                    metadata: None,
+                })
+                .unwrap_err(),
+            EngineError::Dispatch(DispatchError::DuplicateRequestId { .. })
+        ));
+        assert_eq!(loaded.snapshot().backlog.pending, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delayed_terminal_commands_and_removal_do_not_mutate_unrelated_dispatch() {
+        let mut engine = RuntimeEngine::new();
+        for request_id in ["terminal", "unrelated"] {
+            engine
+                .process(RuntimeCommand::QueueDispatch {
+                    request_id: request_id.into(),
+                    target: format!("worker-{request_id}"),
+                    metadata: None,
+                })
+                .unwrap();
+        }
+        engine
+            .process(RuntimeCommand::MarkFailed {
+                request_id: "terminal".into(),
+                reason: "unavailable".into(),
+            })
+            .unwrap();
+        engine.compact();
+        for command in [
+            RuntimeCommand::MarkNotified {
+                request_id: "terminal".into(),
+                channel: "tmux".into(),
+            },
+            RuntimeCommand::MarkDelivered {
+                request_id: "terminal".into(),
+            },
+            RuntimeCommand::MarkFailed {
+                request_id: "terminal".into(),
+                reason: "late".into(),
+            },
+        ] {
+            assert!(matches!(
+                engine.process(command),
+                Err(EngineError::Dispatch(DispatchError::NotFound { .. }))
+            ));
+        }
+        engine
+            .process(RuntimeCommand::RemoveDispatchRecords {
+                request_ids: vec!["terminal".into()],
+            })
+            .unwrap();
+        assert_eq!(engine.snapshot().backlog.pending, 1);
+        assert_eq!(engine.dispatch.records()[0].request_id, "unrelated");
+    }
+
+    #[test]
+    fn repeated_terminal_commands_are_rejected_without_replay_events() {
+        let mut engine = RuntimeEngine::new();
+        engine
+            .process(RuntimeCommand::QueueDispatch {
+                request_id: "terminal".into(),
+                target: "worker".into(),
+                metadata: None,
+            })
+            .unwrap();
+        engine
+            .process(RuntimeCommand::MarkFailed {
+                request_id: "terminal".into(),
+                reason: "unavailable".into(),
+            })
+            .unwrap();
+        let events_before_replay = engine.event_log().len();
+        assert!(matches!(
+            engine.process(RuntimeCommand::MarkFailed {
+                request_id: "terminal".into(),
+                reason: "replayed".into(),
+            }),
+            Err(EngineError::Dispatch(
+                DispatchError::InvalidTransition { .. }
+            ))
+        ));
+        assert_eq!(engine.event_log().len(), events_before_replay);
+        engine.compact();
+        engine.compact();
+        assert_eq!(engine.snapshot().backlog.failed, 0);
+    }
+
+    #[test]
+    fn legacy_removal_history_and_dispatch_ledger_mismatch_fail_closed() {
+        let dir = std::env::temp_dir().join("omx-runtime-test-legacy-removed-seen");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("events.json"),
+            serde_json::to_string(&vec![RuntimeEvent::DispatchRecordsRemoved {
+                request_ids: vec!["legacy-removed".into()],
+            }])
+            .unwrap(),
+        )
+        .unwrap();
+        let mut loaded = RuntimeEngine::load(&dir).unwrap();
+        assert!(matches!(
+            loaded
+                .process(RuntimeCommand::QueueDispatch {
+                    request_id: "legacy-removed".into(),
+                    target: "replacement".into(),
+                    metadata: None,
+                })
+                .unwrap_err(),
+            EngineError::Dispatch(DispatchError::DuplicateRequestId { .. })
+        ));
+        loaded.persist().unwrap();
+        std::fs::write(
+            dir.join(DISPATCH_SEEN_LEDGER_FILE),
+            r#"{"schema_version":1,"request_ids":[]}"#,
+        )
+        .unwrap();
+        assert!(RuntimeEngine::load(&dir).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

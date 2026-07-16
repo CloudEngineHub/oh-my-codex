@@ -4129,25 +4129,89 @@ function isFinalTmuxServerGone(result: ReturnType<typeof runTmux>): boolean {
   return !result.ok && /^no server running on .+$/i.test(result.stderr);
 }
 
-export type DetachedSessionQueryResult =
-  | { status: 'absent' }
-  | { status: 'present' }
-  | { status: 'unavailable'; detail: string };
+export type DetachedSessionIncarnation = {
+  sessionId: string;
+  sessionCreated: string;
+};
+
+export type DetachedSessionLeaderBinding = {
+  paneId: string;
+  pid: number;
+  sessionName: string;
+  incarnation: DetachedSessionIncarnation;
+};
 
 /**
- * Queries only the base detached-session name. `no server running` is tmux's
- * sole query-error proof of absence; every other failure remains unavailable.
+ * Reads pane and session incarnation in one tmux snapshot. This prevents a
+ * same-name replacement from combining a stale session proof with a live pane.
  */
-export function queryDetachedTeamSession(sessionName: string): DetachedSessionQueryResult {
-  const sessions = runTmux(['list-sessions', '-F', '#{session_name}']);
+export function queryDetachedSessionLeaderBinding(
+  paneId: string,
+  pid: number,
+  sessionName: string,
+  expected: DetachedSessionIncarnation,
+): DetachedSessionLeaderBinding | null {
+  const result = runTmuxStructured(['list-panes', '-a', '-F', '#{pane_id}\t#{pane_dead}\t#{pane_pid}\t#{session_name}\t#{session_id}\t#{session_created}']);
+  if (!result.ok) return null;
+  const seenPaneIds = new Set<string>();
+  let binding: DetachedSessionLeaderBinding | null = null;
+  for (const line of result.stdout.split('\n').filter(Boolean)) {
+    const fields = line.split('\t');
+    if (fields.length !== 6) return null;
+    const [currentPaneId, dead, panePid, currentSessionName, sessionId, sessionCreated] = fields;
+    if (!/^%[0-9]+$/.test(currentPaneId) || seenPaneIds.has(currentPaneId) || (dead !== '0' && dead !== '1')
+      || !/^[0-9]+$/.test(panePid) || !Number.isSafeInteger(Number(panePid)) || Number(panePid) <= 0
+      || !currentSessionName || !/^\$[0-9]+$/.test(sessionId) || !/^[0-9]+$/.test(sessionCreated)) return null;
+    seenPaneIds.add(currentPaneId);
+    if (currentPaneId !== paneId) continue;
+    if (dead !== '0' || Number(panePid) !== pid || currentSessionName !== sessionName
+      || sessionId !== expected.sessionId || sessionCreated !== expected.sessionCreated) return null;
+    binding = { paneId: currentPaneId, pid: Number(panePid), sessionName: currentSessionName, incarnation: { sessionId, sessionCreated } };
+  }
+  return binding;
+}
+
+export type DetachedSessionQueryResult =
+  | { status: 'absent' }
+  | { status: 'exact'; incarnation: DetachedSessionIncarnation }
+  | { status: 'replacement'; incarnation: DetachedSessionIncarnation }
+  | { status: 'unavailable'; detail: string };
+
+function parseDetachedSessionIncarnation(stdout: string, sessionName: string): DetachedSessionIncarnation | null | 'malformed' {
+  const baseName = baseSessionName(sessionName);
+  const matches: DetachedSessionIncarnation[] = [];
+  for (const line of stdout.split('\n').filter(Boolean)) {
+    const fields = line.split('\t');
+    if (fields.length !== 3) return 'malformed';
+    const [name, sessionId, sessionCreated] = fields;
+    if (!name || !sessionId || !sessionCreated || !/^\$[0-9]+$/.test(sessionId) || !/^[0-9]+$/.test(sessionCreated)) return 'malformed';
+    if (baseSessionName(name) === baseName) matches.push({ sessionId, sessionCreated });
+  }
+  return matches.length === 0 ? null : matches.length === 1 ? matches[0] : 'malformed';
+}
+
+/**
+ * Reads stable tmux incarnation evidence. Name-only presence is never effect
+ * authority: malformed or unavailable evidence fails closed, and an expected
+ * incarnation distinguishes an exact survivor from a recycled same-name session.
+ */
+export function queryDetachedTeamSession(
+  sessionName: string,
+  expected?: DetachedSessionIncarnation,
+): DetachedSessionQueryResult {
+  const sessions = runTmuxStructured(['list-sessions', '-F', '#{session_name}\t#{session_id}\t#{session_created}']);
   if (!sessions.ok) {
     return isFinalTmuxServerGone(sessions)
       ? { status: 'absent' }
       : { status: 'unavailable', detail: sessions.stderr };
   }
-  return parseTeamSessionNames(sessions.stdout).includes(baseSessionName(sessionName))
-    ? { status: 'present' }
-    : { status: 'absent' };
+  const incarnation = parseDetachedSessionIncarnation(sessions.stdout, sessionName);
+  if (incarnation === 'malformed') return { status: 'unavailable', detail: 'malformed_session_incarnation' };
+  if (incarnation === null) return { status: 'absent' };
+  if (expected && (incarnation.sessionId !== expected.sessionId || incarnation.sessionCreated !== expected.sessionCreated)) {
+    return { status: 'replacement', incarnation };
+  }
+  return { status: 'exact', incarnation };
 }
 
 /** Records tmux accepting the destructive effect separately from its proof. */
