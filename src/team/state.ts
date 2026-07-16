@@ -807,7 +807,7 @@ async function syncParentDirectory(path: string): Promise<void> {
   }
 }
 
-async function removeAndSync(path: string): Promise<void> {
+export async function removeDurableFile(path: string): Promise<void> {
   await rm(path, { force: true });
   await syncParentDirectory(path);
 }
@@ -875,7 +875,7 @@ function membershipTransactionPath(teamName: string, cwd: string): string {
 async function applyMembershipTransactionFiles(files: readonly MembershipTransactionFile[], useNewBytes: boolean): Promise<void> {
   for (const file of files) {
     const bytes = useNewBytes ? file.newBytes : file.oldBytes;
-    if (bytes === null) await removeAndSync(file.path);
+    if (bytes === null) await removeDurableFile(file.path);
     else await writeAtomic(file.path, bytes);
   }
 }
@@ -959,7 +959,7 @@ export async function recoverTeamMembershipTaskTransaction(
   }
   await validateMembershipTransactionFiles(teamName, cwd, journal.files);
   await applyMembershipTransactionFiles(journal.files, journal.phase === 'committed');
-  if (!options.retainJournal) await removeAndSync(journalPath);
+  if (!options.retainJournal) await removeDurableFile(journalPath);
 }
 
 /** Finalize a previously committed membership transaction after caller verification. */
@@ -970,7 +970,7 @@ export async function finalizeTeamMembershipTaskTransaction(teamName: string, cw
     throw new Error(`Cannot finalize non-committed membership transaction for ${teamName}`);
   }
   await validateMembershipTransactionFiles(teamName, cwd, journal.files);
-  await removeAndSync(journalPath);
+  await removeDurableFile(journalPath);
 }
 
 /**
@@ -1025,7 +1025,7 @@ export async function commitTeamMembershipTaskTransaction(
     }
     journal.phase = 'committed';
     await writeAtomic(journalPath, JSON.stringify(journal, null, 2));
-    if (!transaction.retainJournalOnSuccess) await removeAndSync(journalPath);
+    if (!transaction.retainJournalOnSuccess) await removeDurableFile(journalPath);
   } catch (error) {
     if (error instanceof Error && error.message === 'injected_scale_down_interruption:after-first-task-write') throw error;
     if (transaction.failRollbackPersistence || transaction.failRollbackPersistenceAfter) {
@@ -1049,7 +1049,7 @@ export async function commitTeamMembershipTaskTransaction(
     // recovery will retry until the state has converged to the old generation.
     try {
       await applyMembershipTransactionFiles(files, false);
-      await removeAndSync(journalPath);
+      await removeDurableFile(journalPath);
     } catch {
       // The prepared journal is the durable recovery authority.
     }

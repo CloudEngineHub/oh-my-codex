@@ -585,8 +585,8 @@ async function resolveTeamWorkerNudgeBinding(stateDir: string): Promise<{
     const paneId = safeString(worker?.pane_id).trim();
     const panePid = asNumber(worker?.pid);
     const hudPaneId = safeString(raw?.hud_pane_id).trim();
-    const paneOwnerId = safeString(raw?.tmux_pane_owner_id).trim() || `team:${teamName}`;
-    if (!/^%\d+$/.test(paneId) || !Number.isInteger(panePid) || panePid <= 0 || paneId === hudPaneId) return null;
+    const paneOwnerId = typeof raw?.tmux_pane_owner_id === 'string' ? raw.tmux_pane_owner_id.trim() : '';
+    if (!/^%\d+$/.test(paneId) || !Number.isInteger(panePid) || panePid <= 0 || !paneOwnerId || paneId === hudPaneId) return null;
     return { paneId, panePid, paneOwnerId, hudPaneId };
   } catch {
     return null;

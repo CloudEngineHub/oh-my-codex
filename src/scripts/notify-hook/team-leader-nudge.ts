@@ -27,6 +27,7 @@ import { isDeepInterviewStateActive } from './auto-nudge.js';
 const LEADER_PANE_MISSING_NO_INJECTION_REASON = 'leader_pane_missing_no_injection';
 const LEADER_PANE_SHELL_NO_INJECTION_REASON = 'leader_pane_shell_no_injection';
 const TEAM_SHUTDOWN_NO_INJECTION_REASON = 'team_state_gone_or_shutdown';
+const LEADER_PANE_OWNER_MISSING_NO_INJECTION_REASON = 'leader_pane_owner_missing_no_injection';
 const LEADER_PANE_SAME_CLASSIFIED_STATE_SUPPRESSED_REASON = 'pane_already_shows_same_classified_state';
 const LEADER_NOTIFICATION_DEFERRED_TYPE = 'leader_notification_deferred';
 const ACK_WITHOUT_START_EVIDENCE_REASON = 'ack_without_start_evidence';
@@ -745,7 +746,7 @@ export async function maybeNudgeTeamLeader({
         leaderPaneId = safeString(raw && raw.leader_pane_id ? raw.leader_pane_id : '').trim();
         hudPaneId = safeString(raw && raw.hud_pane_id ? raw.hud_pane_id : '').trim();
         leaderPanePid = positivePanePid(raw && raw.leader_pane_pid);
-        tmuxPaneOwnerId = safeString(raw && raw.tmux_pane_owner_id ? raw.tmux_pane_owner_id : '').trim() || `team:${teamName}`;
+        tmuxPaneOwnerId = typeof raw?.tmux_pane_owner_id === 'string' ? raw.tmux_pane_owner_id.trim() : '';
         ownerSessionId = safeString(raw && raw.leader && raw.leader.session_id ? raw.leader.session_id : '').trim();
         if (Array.isArray(raw && raw.workers)) workers = raw.workers;
       }
@@ -775,6 +776,10 @@ export async function maybeNudgeTeamLeader({
       ? normalizedLeaderPaneId
       : '';
     if (!tmuxSession && !canonicalLeaderPaneId) continue;
+    if (!tmuxPaneOwnerId) {
+      await recordSuppressedLeaderNudge({ logsDir, source, teamName, reason: LEADER_PANE_OWNER_MISSING_NO_INJECTION_REASON });
+      continue;
+    }
     if (canonicalLeaderPaneId && !leaderPanePid) {
       await recordSuppressedLeaderNudge({ logsDir, source, teamName, reason: 'leader_pane_pid_missing' });
       continue;

@@ -20,7 +20,15 @@ async function withTempWorkingDir(run: (cwd: string) => Promise<void>): Promise<
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
-  await writeFile(path, JSON.stringify(value, null, 2));
+  let persisted = value;
+  if (path.endsWith('/config.json') && value && typeof value === 'object' && !Array.isArray(value)) {
+    const config = value as Record<string, unknown>;
+    if (!Object.prototype.hasOwnProperty.call(config, 'tmux_pane_owner_id')
+      && typeof config.name === 'string' && config.name.trim()) {
+      persisted = { ...config, tmux_pane_owner_id: `team:${config.name.trim()}` };
+    }
+  }
+  await writeFile(path, JSON.stringify(persisted, null, 2));
 }
 
 async function writeCanonicalTeamFixture(
@@ -88,6 +96,7 @@ async function writeCanonicalTeamFixture(
     tmux_session: `${teamName}:0`,
     leader_pane_id: '%97',
     leader_pane_pid: 12097,
+    tmux_pane_owner_id: `team:${teamName}`,
     hud_pane_id: null,
     resize_hook_name: null,
     resize_hook_target: null,
@@ -404,6 +413,43 @@ describe('notify-hook leader-side authority handoff', () => {
       const tmuxLog = await readFile(tmuxLogPath, 'utf-8').catch(() => '');
       assert.doesNotMatch(tmuxLog, /send-keys/, 'a same-ID/PID foreign owner must not receive leader input');
     });
+  });
+
+  it('defers leader nudges without tmux reads when the persisted owner token is missing or malformed', async () => {
+    for (const owner of [undefined, 17] as const) {
+      await withTempWorkingDir(async (cwd) => {
+        const stateDir = join(cwd, '.omx', 'state');
+        const logsDir = join(cwd, '.omx', 'logs');
+        const teamName = 'owner-required';
+        const teamDir = join(stateDir, 'team', teamName);
+        const fakeBinDir = join(cwd, 'fake-bin');
+        const tmuxLogPath = join(cwd, 'tmux.log');
+        await mkdir(logsDir, { recursive: true });
+        await mkdir(fakeBinDir, { recursive: true });
+        await mkdir(teamDir, { recursive: true });
+        await writeJson(join(stateDir, 'team-state.json'), {
+          active: true,
+          team_name: teamName,
+          current_phase: 'team-exec',
+        });
+        const config: Record<string, unknown> = {
+          name: teamName,
+          tmux_session: `${teamName}:0`,
+          leader_pane_id: '%91',
+          leader_pane_pid: 12091,
+        };
+        config.tmux_pane_owner_id = owner === undefined ? null : owner;
+        await writeJson(join(teamDir, 'config.json'), config);
+        await writeFile(join(fakeBinDir, 'tmux'), buildFakeTmux(tmuxLogPath));
+        await chmod(join(fakeBinDir, 'tmux'), 0o755);
+
+        const result = runNotifyHook(cwd, fakeBinDir, { OMX_SESSION_ID: 'sess-canonical-missing' });
+        assert.equal(result.status, 0, `notify-hook failed: ${result.stderr || result.stdout}`);
+        assert.equal(existsSync(tmuxLogPath), false, 'missing or malformed persisted owner must not capture or send tmux input');
+        const delivery = await readTeamDeliveryLog(cwd);
+        assert.ok(delivery.some((entry) => entry.reason === 'leader_pane_owner_missing_no_injection'), 'owner absence must be durably deferred');
+      });
+    }
   });
 
   it('does not drain pending dispatch requests from notify-hook leader context', async () => {
@@ -1488,6 +1534,7 @@ exit 0
         tmux_session: 'busy-live-pane:0',
         leader_pane_id: '%93',
         leader_pane_pid: 12093,
+        tmux_pane_owner_id: `team:${teamName}`,
       });
       await writeJson(join(mailboxDir, 'leader-fixed.json'), {
         worker: 'leader-fixed',

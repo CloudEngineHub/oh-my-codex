@@ -37,7 +37,7 @@ import {
   spawnPlatformCommandSync,
 } from '../utils/platform-command.js';
 import { resolveOmxCliEntryPath } from '../utils/paths.js';
-import { readExactPaneProof, readExactPaneProofSync, type ExactPaneProof } from './exact-pane.js';
+import { readExactPaneProof, readExactPaneProofsSync, readExactPaneProofSync, type ExactPaneProof } from './exact-pane.js';
 import { resolveCanonicalTeamStateRoot } from './state-root.js';
 
 const execFileAsync = promisify(execFile);
@@ -388,8 +388,7 @@ export function finalizeRestoredHudCleanupDebtSync(
     throw new Error(`restored_hud_cleanup_debt_unresolved:${debt.pane_id}`);
   }
   if (requireFreshHudIdentity) {
-    const proof = readExactPaneProofSync(debt.pane_id);
-    if (proof.status !== 'live' || proof.pid !== debt.pane_pid || !debt.leader_pane_owner_id) {
+    if (!debt.leader_pane_owner_id) {
       throw new Error(`restored_hud_cleanup_debt_unresolved:${debt.pane_id}`);
     }
     const leader = requireLiveTeamOwnedPaneSync(
@@ -398,14 +397,13 @@ export function finalizeRestoredHudCleanupDebtSync(
       debt.leader_pane_owner_id,
     );
     const topology = listPanesResult(leader);
-    const hudMatches = !topology.error && topology.panes.filter((pane) => pane.paneId === proof.paneId
+    const hudMatches = !topology.error && topology.panes.filter((pane) => pane.paneId === debt.pane_id
       && hudPaneMatchesOwner(pane, { leaderPaneId: debt.hud_owner_leader_pane_id })).length === 1;
     if (!hudMatches) throw new Error(`restored_hud_cleanup_debt_unresolved:${debt.pane_id}`);
     const finalProof = readExactPaneProofSync(debt.pane_id);
     if (finalProof.status !== 'live' || finalProof.pid !== debt.pane_pid) {
       throw new Error(`restored_hud_cleanup_debt_unresolved:${debt.pane_id}`);
     }
-    requireLiveTeamOwnedPaneSync(debt.leader_pane_id, debt.leader_pane_pid, debt.leader_pane_owner_id);
   }
   removeRestoredHudCleanupDebtSync(record.path);
 }
@@ -659,6 +657,16 @@ function requireFrozenWindowTopologySync(
       if (proof.status === 'unavailable') throw new ExactPaneProofUnavailableError(proof);
       if (proof.status === 'gone') throw new Error(`tmux pane is not proven live: ${proof.paneId}`);
       if (proof.pid !== expectedPanePid) throw new Error(`tmux pane identity changed: ${proof.paneId}`);
+    }
+  }
+
+  const finalProofs = readExactPaneProofsSync([...expectedPanePids.keys()]);
+  for (const [index, [paneId, expectedPanePid]] of [...expectedPanePids.entries()].entries()) {
+    const proof = finalProofs[index]!;
+    if (proof.status === 'unavailable') throw new ExactPaneProofUnavailableError(proof);
+    if (proof.status === 'gone') throw new Error(`tmux pane is not proven live: ${proof.paneId}`);
+    if (proof.paneId !== paneId || proof.pid !== expectedPanePid) {
+      throw new Error(`tmux pane identity changed: ${paneId}`);
     }
   }
 }

@@ -46,6 +46,7 @@ import {
   commitTeamMembershipTaskTransaction,
   finalizeTeamMembershipTaskTransaction,
   writeAtomic,
+  teamRemoveDurableFile as removeDurableFile,
   teamAppendEvent as appendTeamEvent,
   teamCreateTask as createStateTask,
   teamListTasks as listTasks,
@@ -1631,7 +1632,7 @@ export async function reconcileScaleDownCleanupDebt(
     const stillCanonical = removedWorkerNames.filter((name) => config.workers.some((worker) => worker.name === name));
     // A pre-commit journal is not authorization to kill or remove anything.
     if (stillCanonical.length === removedWorkerNames.length) {
-      await rm(cleanupDebtPath, { force: true });
+      await removeDurableFile(cleanupDebtPath);
       return { ok: true };
     }
     if (stillCanonical.length > 0) return { ok: false, error: 'scale_down_cleanup_debt_membership_inconsistent' };
@@ -1735,7 +1736,7 @@ export async function reconcileScaleDownCleanupDebt(
       }, null, 2));
       return { ok: false, error: `scale_down_cleanup_debt_resource_cleanup_failed:${String(error)}` };
     }
-    await rm(cleanupDebtPath, { force: true });
+    await removeDurableFile(cleanupDebtPath);
     return { ok: true };
   });
 }

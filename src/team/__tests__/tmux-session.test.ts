@@ -4296,6 +4296,95 @@ esac
     }
   });
 
+  it('blocks window-wide layout when an early-proved pane PID changes during a later owner check', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-team-final-window-proof-'));
+    const previousTmux = process.env.TMUX;
+    const previousTmuxPane = process.env.TMUX_PANE;
+    const previousWorkerCli = process.env.OMX_TEAM_WORKER_CLI;
+    try {
+      await withMockTmuxFixture(
+        'omx-tmux-final-window-proof-',
+        (logPath) => `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "${logPath}"
+case "\${1:-}" in
+  -V) echo 'tmux 3.4' ;;
+  display-message)
+    case "$*" in *'#{window_width}'*) echo 120 ;; *) echo 'leader:0 %1' ;; esac
+    ;;
+  list-panes)
+    case "$*" in
+      *'-a -F #{pane_id}'*)
+        if [ -f "${logPath}.replace" ]; then
+          printf '%%1\t0\t2000000091\n%%2\t0\t2000000092\n'
+        else
+          printf '%%1\\t0\\t2000000001\\n%%2\\t0\\t2000000002\\n'
+        fi
+        ;;
+      *'pane_current_command'*)
+        if [ -f "${logPath}.worker" ]; then printf "%%1\\tnode\\t'codex'\\n%%2\\tgemini\\t'gemini'\\n"; else printf "%%1\\tnode\\t'codex'\\n"; fi
+        ;;
+      *)
+        if [ -f "${logPath}.worker" ]; then printf '%%1\\n%%2\\n'; else printf '%%1\\n'; fi
+        ;;
+    esac
+    ;;
+  split-window) : > "${logPath}.worker"; echo '%2' ;;
+  show-option)
+    case "$*" in
+      *' -t %1 @omx_team_pane_owner_id') echo 'team:final-window-proof' ;;
+      *' -t %2 @omx_team_pane_owner_id') : > "${logPath}.replace"; echo 'team:final-window-proof' ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  set-option|resize-pane|select-pane|set-hook|run-shell|send-keys|kill-pane) ;;
+  select-layout|set-window-option) exit 97 ;;
+esac
+`,
+        async ({ logPath }) => {
+          const fakeBinDir = join(logPath, '..');
+          const geminiPath = join(fakeBinDir, 'gemini');
+          await writeFile(geminiPath, '#!/bin/sh\nexit 0\n');
+          await chmod(geminiPath, 0o755);
+          process.env.TMUX = 'leader-session,stub,0';
+          process.env.TMUX_PANE = '%1';
+          process.env.OMX_TEAM_WORKER_CLI = 'gemini';
+
+          assert.throws(
+            () => createTeamSession('Final Window Proof', 1, cwd, [], undefined, {
+              teamPaneOwnerId: 'team:final-window-proof',
+            }),
+            (error: unknown) => {
+              assert.ok(error instanceof CreateTeamSessionPartialError);
+              assert.ok(error.originalError instanceof Error);
+              assert.match(error.originalError.message, /tmux pane identity changed: %2/);
+              assert.equal(error.partialSession.name, 'leader:0');
+              assert.equal(error.partialSession.teamPaneOwnerId, 'team:final-window-proof');
+              assert.deepEqual(error.partialSession.workerPaneIds, ['%2']);
+              assert.deepEqual(error.partialSession.workerPanePidsByIndex, [2000000002]);
+              assert.deepEqual(error.proofUnavailable, []);
+              assert.ok(error.cleanupErrors.some((message) => /tmux pane identity changed: %2/.test(message)));
+              return true;
+            },
+          );
+
+          const commands = await readFile(logPath, 'utf-8');
+          assert.match(commands, /show-option -qv -p -t %2 @omx_team_pane_owner_id/);
+          assert.doesNotMatch(commands, /select-layout|set-window-option/);
+          assert.doesNotMatch(commands, /kill-pane/);
+        },
+      );
+    } finally {
+      if (typeof previousTmux === 'string') process.env.TMUX = previousTmux;
+      else delete process.env.TMUX;
+      if (typeof previousTmuxPane === 'string') process.env.TMUX_PANE = previousTmuxPane;
+      else delete process.env.TMUX_PANE;
+      if (typeof previousWorkerCli === 'string') process.env.OMX_TEAM_WORKER_CLI = previousWorkerCli;
+      else delete process.env.OMX_TEAM_WORKER_CLI;
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('tags leader, worker, and HUD panes with pane-scoped instance ownership', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'omx-team-pane-tags-'));
     const prevTmux = process.env.TMUX;
@@ -6346,6 +6435,62 @@ esac
           assert.equal(splitCount, 1);
           assert.doesNotMatch(tmuxLog, /kill-pane -t %44/);
           assert.match(tmuxLog, /list-panes -t %11 -F #\{pane_id\}\t#\{pane_current_command\}\t#\{pane_start_command\}/);
+        },
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('retains strict restored-HUD debt when the HUD command changes after leader authorization', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-restored-hud-final-command-change-'));
+    try {
+      await withMockTmuxFixture(
+        'omx-tmux-restored-hud-final-command-change-',
+        (logPath) => `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "${logPath}"
+case "\${1:-}" in
+  list-panes)
+    if [ "$2" = '-a' ]; then
+      printf '%%11\\t0\\t2000000011\\n%%44\\t0\\t2000000044\\n'
+    elif [ -f "${logPath}.leader-authorized" ]; then
+      printf "%%11\\tzsh\\tzsh\\n%%44\\tnode\\texec env OMX_TMUX_HUD_OWNER=1 OMX_TMUX_HUD_LEADER_PANE='%%other' /node /omx.js hud --watch\\n"
+    else
+      printf "%%11\\tzsh\\tzsh\\n%%44\\tnode\\texec env OMX_TMUX_HUD_OWNER=1 OMX_TMUX_HUD_LEADER_PANE='%%11' /node /omx.js hud --watch\\n"
+    fi
+    ;;
+  show-option)
+    : > "${logPath}.leader-authorized"
+    echo 'team:restore-final-command-change'
+    ;;
+esac
+`,
+        async ({ logPath }) => {
+          const debtPath = join(cwd, '.omx', 'state', '.restored-hud-cleanup-debt.json');
+          await mkdir(dirname(debtPath), { recursive: true });
+          await writeFile(debtPath, `${JSON.stringify({
+            schema_version: 1,
+            operation: 'restored_hud_cleanup',
+            pane_id: '%44',
+            pane_pid: 2000000044,
+            leader_pane_id: '%11',
+            leader_pane_pid: 2000000011,
+            leader_pane_owner_id: 'team:restore-final-command-change',
+            hud_owner_leader_pane_id: '%11',
+          })}\n`);
+
+          assert.throws(
+            () => finalizeRestoredHudCleanupDebtSync(cwd, '%44', 2000000044, undefined, true),
+            /restored_hud_cleanup_debt_unresolved:%44/,
+          );
+          await readFile(debtPath, 'utf-8');
+
+          const commands = (await readFile(logPath, 'utf-8')).trim().split('\n').filter(Boolean);
+          const topologyIndex = commands.findIndex((command) => command.startsWith('list-panes -t %11 -F '));
+          const ownerIndex = commands.findIndex((command) => command === 'show-option -qv -p -t %11 @omx_team_pane_owner_id');
+          assert.ok(ownerIndex >= 0 && topologyIndex > ownerIndex);
+          assert.equal(commands.slice(topologyIndex + 1).filter((command) => command.startsWith('list-panes -a ')).length, 0);
         },
       );
     } finally {

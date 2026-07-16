@@ -65,6 +65,7 @@ const EXPECTED_STATE_RE_EXPORTS = {
   finalizeTeamMembershipTaskTransaction: 'finalizeTeamMembershipTaskTransaction',
   resolveDispatchLockTimeoutMs: 'resolveDispatchLockTimeoutMs',
   writeAtomic: 'writeAtomic',
+  teamRemoveDurableFile: 'removeDurableFile',
 } as const;
 
 function parseStateReExports(source: string): Record<string, string> {

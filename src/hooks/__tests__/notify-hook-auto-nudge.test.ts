@@ -1335,6 +1335,39 @@ exit 0
     });
   });
 
+  it('does not capture or send in team-worker context without a persisted string owner token', async () => {
+    for (const owner of [undefined, 17] as const) {
+      await withTempWorkingDir(async (cwd) => {
+        const workerStateRoot = join(cwd, 'leader-state-root');
+        const codexHome = join(cwd, 'codex-home');
+        const fakeBinDir = join(cwd, 'fake-bin');
+        const tmuxLogPath = join(cwd, 'tmux.log');
+        await mkdir(workerStateRoot, { recursive: true });
+        await mkdir(codexHome, { recursive: true });
+        await mkdir(fakeBinDir, { recursive: true });
+        await writeWorkerIdentityFixture(workerStateRoot, cwd, 'auto-nudge', 'worker-1');
+        const configPath = join(workerStateRoot, 'team', 'auto-nudge', 'config.json');
+        const config = JSON.parse(await readFile(configPath, 'utf-8'));
+        if (owner === undefined) delete config.tmux_pane_owner_id;
+        else config.tmux_pane_owner_id = owner;
+        await writeJson(configPath, config);
+        await writeJson(join(codexHome, '.omx-config.json'), { autoNudge: { enabled: true, delaySec: 0, stallMs: 0 } });
+        await writeFile(join(fakeBinDir, 'tmux'), buildFakeTmux(tmuxLogPath));
+        await chmod(join(fakeBinDir, 'tmux'), 0o755);
+
+        const result = runNotifyHook(cwd, fakeBinDir, codexHome, {
+          'last-assistant-message': 'I can continue with the worker follow-up from here.',
+        }, {
+          OMX_TEAM_WORKER: 'auto-nudge/worker-1',
+          OMX_TEAM_STATE_ROOT: workerStateRoot,
+        });
+        assert.equal(result.status, 0, `hook failed: ${result.stderr || result.stdout}`);
+        const tmuxLog = await readFile(tmuxLogPath, 'utf-8').catch(() => '');
+        assert.doesNotMatch(tmuxLog, /capture-pane|send-keys/, 'missing or malformed persisted owner must not capture or send tmux input');
+      });
+    }
+  });
+
   it('fails closed for Team-worker owner takeover, recycled panes, and HUD targets', async () => {
     for (const scenario of ([
       { name: 'owner takeover', env: { OMX_TEST_TMUX_OWNER: 'team:foreign' }, hudPaneId: null },

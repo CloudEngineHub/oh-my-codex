@@ -1608,7 +1608,7 @@ require('fs').writeFileSync(process.env.OMX_NON_CODEX_CAPTURE, process.argv.slic
           tmuxScript: (tmuxLogPath) => `#!/bin/sh
 set -eu
 printf '%s\n' "$*" >> "${tmuxLogPath}"
-owner_path="${tmuxLogPath}.owner"
+owner_path="${tmuxLogPath}.owner-%1"
 case "$1" in
   --version|-V)
     echo "tmux 3.4"
@@ -1670,12 +1670,12 @@ case "$1" in
     ;;
   show-option)
     case "$*" in
-      *"@omx_team_pane_owner_id"*) [ -f "$owner_path" ] && cat "$owner_path" ;;
+      *"@omx_team_pane_owner_id"*) owner_path="${tmuxLogPath}.owner-\${5#%}"; [ -f "$owner_path" ] && cat "$owner_path" ;;
     esac
     exit 0
     ;;
   set-option)
-    if [ "\${5:-}" = "@omx_team_pane_owner_id" ]; then printf '%s' "\${6:-}" > "$owner_path"; fi
+    if [ "\${5:-}" = "@omx_team_pane_owner_id" ]; then owner_path="${tmuxLogPath}.owner-\${4#%}"; printf '%s' "\${6:-}" > "$owner_path"; fi
     exit 0
     ;;
   kill-pane)
@@ -1793,7 +1793,7 @@ esac
           tmuxScript: (tmuxLogPath) => `#!/bin/sh
 set -eu
 printf '%s\n' "$*" >> "${tmuxLogPath}"
-owner_path="${tmuxLogPath}.owner"
+owner_path="${tmuxLogPath}.owner-%1"
 case "$1" in
   -V)
     echo "tmux 3.4"
@@ -1855,12 +1855,12 @@ case "$1" in
     ;;
   show-option)
     case "$*" in
-      *"@omx_team_pane_owner_id"*) [ -f "$owner_path" ] && cat "$owner_path" ;;
+      *"@omx_team_pane_owner_id"*) owner_path="${tmuxLogPath}.owner-\${5#%}"; [ -f "$owner_path" ] && cat "$owner_path" ;;
     esac
     exit 0
     ;;
   set-option)
-    if [ "\${5:-}" = "@omx_team_pane_owner_id" ]; then printf '%s' "\${6:-}" > "$owner_path"; fi
+    if [ "\${5:-}" = "@omx_team_pane_owner_id" ]; then owner_path="${tmuxLogPath}.owner-\${4#%}"; printf '%s' "\${6:-}" > "$owner_path"; fi
     exit 0
     ;;
   kill-pane)
@@ -2268,7 +2268,7 @@ process.on('SIGTERM', () => process.exit(0));`,
           tmuxScript: (tmuxLogPath) => `#!/bin/sh
 set -eu
 printf '%s\n' "$*" >> "${tmuxLogPath}"
-owner_path="${tmuxLogPath}.owner"
+owner_path="${tmuxLogPath}.owner-%1"
 case "\${1:-}" in
   -V)
     echo "tmux 3.4"
@@ -2325,12 +2325,12 @@ case "\${1:-}" in
     ;;
   show-option)
     case "$*" in
-      *"@omx_team_pane_owner_id"*) [ -f "$owner_path" ] && cat "$owner_path" ;;
+      *"@omx_team_pane_owner_id"*) owner_path="${tmuxLogPath}.owner-\${5#%}"; [ -f "$owner_path" ] && cat "$owner_path" ;;
     esac
     exit 0
     ;;
   set-option)
-    if [ "\${5:-}" = "@omx_team_pane_owner_id" ]; then printf '%s' "\${6:-}" > "$owner_path"; fi
+    if [ "\${5:-}" = "@omx_team_pane_owner_id" ]; then owner_path="${tmuxLogPath}.owner-\${4#%}"; printf '%s' "\${6:-}" > "$owner_path"; fi
     exit 0
     ;;
   kill-pane)
@@ -2429,7 +2429,7 @@ esac
           tmuxScript: (tmuxLogPath) => `#!/bin/sh
 set -eu
 printf '%s\n' "$*" >> "${tmuxLogPath}"
-owner_path="${tmuxLogPath}.owner"
+owner_path="${tmuxLogPath}.owner-%1"
 case "\${1:-}" in
   -V)
     echo "tmux 3.4"
@@ -2486,13 +2486,13 @@ case "\${1:-}" in
     ;;
   show-option)
     case "$*" in
-      *"@omx_team_pane_owner_id"*) [ -f "$owner_path" ] && cat "$owner_path" ;;
+      *"@omx_team_pane_owner_id"*) owner_path="${tmuxLogPath}.owner-\${5#%}"; [ -f "$owner_path" ] && cat "$owner_path" ;;
       *) exit 1 ;;
     esac
     exit 0
     ;;
   set-option)
-    if [ "\${5:-}" = "@omx_team_pane_owner_id" ]; then printf '%s' "\${6:-}" > "$owner_path"; fi
+    if [ "\${5:-}" = "@omx_team_pane_owner_id" ]; then owner_path="${tmuxLogPath}.owner-\${4#%}"; printf '%s' "\${6:-}" > "$owner_path"; fi
     exit 0
     ;;
   kill-pane)
@@ -2593,7 +2593,7 @@ esac
           tmuxScript: (tmuxLogPath) => `#!/bin/sh
 set -eu
 printf '%s\n' "$*" >> "${tmuxLogPath}"
-owner_path="${tmuxLogPath}.owner"
+owner_path="${tmuxLogPath}.owner-%1"
 case "\${1:-}" in
   -V)
     echo "tmux 3.4"
@@ -2658,12 +2658,12 @@ case "\${1:-}" in
     ;;
   show-option)
     case "$*" in
-      *"@omx_team_pane_owner_id"*) [ -f "$owner_path" ] && cat "$owner_path" ;;
+      *"@omx_team_pane_owner_id"*) owner_path="${tmuxLogPath}.owner-\${5#%}"; [ -f "$owner_path" ] && cat "$owner_path" ;;
     esac
     exit 0
     ;;
   set-option)
-    if [ "\${5:-}" = "@omx_team_pane_owner_id" ]; then printf '%s' "\${6:-}" > "$owner_path"; fi
+    if [ "\${5:-}" = "@omx_team_pane_owner_id" ]; then owner_path="${tmuxLogPath}.owner-\${4#%}"; printf '%s' "\${6:-}" > "$owner_path"; fi
     exit 0
     ;;
   resize-pane|select-layout|set-window-option|select-pane|set-hook|run-shell)
@@ -2847,8 +2847,8 @@ case "\${1:-}" in
     case "$*" in
       *"-a -F #{pane_id}"*)
         printf "%%1\t0\t2000001111\n"
-        if [ -f "${tmuxLogPath}.worker-created" ]; then printf "%%2\t0\t2000002222\n"; fi
-        if [ -f "${tmuxLogPath}.hud-created" ]; then printf "%%3\t0\t2000003333\n"; fi
+        if [ -f "${tmuxLogPath}.worker-created" ] && [ ! -f "${tmuxLogPath}.killed-%2" ]; then printf "%%2\t0\t2000002222\n"; fi
+        if [ -f "${tmuxLogPath}.hud-created" ] && [ ! -f "${tmuxLogPath}.killed-%3" ]; then printf "%%3\t0\t2000003333\n"; fi
         ;;
       *"pane_current_command"*)
         printf "%%1\tnode\t'codex'\n"
@@ -2980,8 +2980,8 @@ case "\${1:-}" in
     case "$*" in
       *"-a -F #{pane_id}"*)
         printf "%%1\t0\t2000001111\n"
-        if [ -f "${tmuxLogPath}.worker-created" ]; then printf "%%2\t0\t2000002222\n"; fi
-        if [ -f "${tmuxLogPath}.hud-created" ]; then printf "%%3\t0\t2000003333\n"; fi
+        if [ -f "${tmuxLogPath}.worker-created" ] && [ ! -f "${tmuxLogPath}.killed-%2" ]; then printf "%%2\t0\t2000002222\n"; fi
+        if [ -f "${tmuxLogPath}.hud-created" ] && [ ! -f "${tmuxLogPath}.killed-%3" ]; then printf "%%3\t0\t2000003333\n"; fi
         ;;
       *"pane_current_command"*)
         printf "%%1\tnode\t'codex'\n"
@@ -4531,7 +4531,7 @@ esac
               [{ subject: 's', description: 'd', owner: 'worker-1' }],
               cwd,
             )),
-            /exact_pane_proof_unavailable:%2:malformed_snapshot/,
+            /exact_pane_proof_unavailable:%1:malformed_snapshot/,
           );
 
           const runtimeTeamName = await resolveRuntimeTeamName(cwd, 'team-no-resource-create-proof');
@@ -7967,6 +7967,63 @@ esac
     }
   });
 
+  it('shutdownTeam rejects a detached leader owner takeover immediately before kill-session', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-runtime-detached-session-owner-takeover-'));
+    try {
+      await withMockTmuxFixture(
+        {
+          dirPrefix: 'omx-runtime-detached-session-owner-takeover-bin-',
+          tmuxScript: (tmuxLogPath) => `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "${tmuxLogPath}"
+case "$1" in
+  -V) echo 'tmux 3.4' ;;
+  list-panes)
+    case "$*" in
+      *'#{session_name}'*) printf '%%1\\t0\\t4242\\tomx-team-detached-owner-takeover\\n' ;;
+      *'-a -F #{pane_id}'*) printf '%%1\\t0\\t4242\\n' ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  show-option|show-options)
+    if [ -f "${tmuxLogPath}.owner-read" ]; then
+      echo 'team:foreign'
+    else
+      : > "${tmuxLogPath}.owner-read"
+      echo 'team:detached-owner-takeover'
+    fi
+    ;;
+  kill-session) exit 99 ;;
+  *) exit 0 ;;
+esac
+`,
+        },
+        async ({ tmuxLogPath }) => {
+          const teamName = 'detached-owner-takeover';
+          await initTeamState(teamName, 'reject detached leader owner takeover', 'executor', 1, cwd);
+          const config = await readTeamConfig(teamName, cwd);
+          assert.ok(config);
+          if (!config) return;
+          config.tmux_session = 'omx-team-detached-owner-takeover';
+          config.leader_pane_id = '%1';
+          config.leader_pane_pid = 4242;
+          config.tmux_pane_owner_id = 'team:detached-owner-takeover';
+          await saveTeamConfig(config, cwd);
+
+          await assert.rejects(
+            () => shutdownTeam(teamName, cwd, { force: true }),
+            /detached_session_destroy_authorization_unavailable:omx-team-detached-owner-takeover/,
+          );
+          assert.ok(await readTeamConfig(teamName, cwd));
+          const tmuxLog = await readFile(tmuxLogPath, 'utf-8');
+          assert.doesNotMatch(tmuxLog, /kill-session -t omx-team-detached-owner-takeover/);
+        },
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('shutdownTeam stops before any OS signal when proof is lost after pane PID authorization', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'omx-runtime-shutdown-malformed-pane-proof-'));
     const proofStatePath = join(cwd, 'shutdown-proof-authorized-once');
@@ -8580,10 +8637,7 @@ case "$1" in
     ;;
   show-option)
     case "$*" in
-      *"-p -t %10 @omx_team_pane_owner_id"*)
-        echo "team:team-shutdown-unrelated-pane"
-        ;;
-      *"-p -t %12 @omx_team_pane_owner_id"*)
+      *"-p -t %10 @omx_team_pane_owner_id"*|*"-p -t %12 @omx_team_pane_owner_id"*|*"-p -t %13 @omx_team_pane_owner_id"*|*"-p -t %14 @omx_team_pane_owner_id"*)
         echo "team:team-shutdown-unrelated-pane"
         ;;
       *)
@@ -8741,13 +8795,13 @@ esac
     }
   });
 
-  it('shutdownTeam fails closed when a canonical shared worker owner tag mismatches', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'omx-runtime-shutdown-worker-owner-mismatch-'));
-    const teamName = 'team-worker-owner-mismatch';
+  it('shutdownTeam fails closed when a canonical shared worker owner tag is missing', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-runtime-shutdown-worker-owner-missing-'));
+    const teamName = 'team-worker-owner-missing';
     try {
       await withMockTmuxFixture(
         {
-          dirPrefix: 'omx-runtime-shutdown-worker-owner-mismatch-bin-',
+          dirPrefix: 'omx-runtime-shutdown-worker-owner-missing-bin-',
           tmuxScript: (tmuxLogPath) => `#!/bin/sh
 set -eu
 printf '%s\\n' "$*" >> "${tmuxLogPath}"
@@ -8769,7 +8823,7 @@ case "$1" in
         exit 1
         ;;
       *"-t leader:0 -F #{pane_id}"*"#{pane_current_command}"*)
-        printf "%%11\\tzsh\\tzsh\\n%%12\\tnode\\tnode /tmp/bin/omx.js hud --watch\\n%%13\\tcodex\\tenv OMX_TEAM_INTERNAL_WORKER=team-worker-owner-mismatch/worker-1 codex\\n%%14\\tcodex\\tenv OMX_TEAM_INTERNAL_WORKER=team-worker-owner-mismatch/worker-2 codex\\n"
+        printf "%%11\\tzsh\\tzsh\\n%%12\\tnode\\tnode /tmp/bin/omx.js hud --watch\\n%%13\\tcodex\\tenv OMX_TEAM_INTERNAL_WORKER=team-worker-owner-missing/worker-1 codex\\n%%14\\tcodex\\tenv OMX_TEAM_INTERNAL_WORKER=team-worker-owner-missing/worker-2 codex\\n"
         exit 0
         ;;
       *)
@@ -8784,14 +8838,11 @@ case "$1" in
     ;;
   show-option)
     case "$*" in
-      *"-p -t %11 @omx_team_pane_owner_id"*)
-        echo "team:team-worker-owner-mismatch"
-        ;;
-      *"-p -t %12 @omx_team_pane_owner_id"*)
-        echo "team:team-worker-owner-mismatch"
+      *"-p -t %11 @omx_team_pane_owner_id"*|*"-p -t %12 @omx_team_pane_owner_id"*|*"-p -t %13 @omx_team_pane_owner_id"*)
+        echo "team:team-worker-owner-missing"
         ;;
       *"-p -t %14 @omx_team_pane_owner_id"*)
-        echo "team:other-team"
+        exit 0
         ;;
       *)
         exit 1
@@ -8813,7 +8864,7 @@ esac
 `,
         },
         async ({ tmuxLogPath }) => {
-          await initTeamState(teamName, 'shutdown worker owner mismatch test', 'executor', 2, cwd);
+          await initTeamState(teamName, 'shutdown worker owner missing test', 'executor', 2, cwd);
           const config = await readTeamConfig(teamName, cwd);
           assert.ok(config);
           if (!config) return;
@@ -8827,11 +8878,21 @@ esac
           config.workers[1]!.pane_id = '%14';
           config.workers[1]!.pid = 2000000014;
           await saveTeamConfig(config, cwd);
-
-          await assert.rejects(
-            () => shutdownTeam(teamName, cwd, { force: true }),
-            /shutdown_shared_session_worker_owner_changed:%14/,
-          );
+          const originalProcessKill = process.kill;
+          const signals: Array<number | NodeJS.Signals | undefined> = [];
+          process.kill = ((_pid: number, signal?: number | NodeJS.Signals) => {
+            if (signal !== 0) signals.push(signal);
+            return true;
+          }) as typeof process.kill;
+          try {
+            await assert.rejects(
+              () => shutdownTeam(teamName, cwd, { force: true }),
+              /shutdown_shared_session_worker_owner_changed:%14/,
+            );
+          } finally {
+            process.kill = originalProcessKill;
+          }
+          assert.deepEqual(signals.filter((signal) => signal === 'SIGTERM' || signal === 'SIGKILL'), []);
 
           const tmuxLog = await readFile(tmuxLogPath, 'utf-8');
           assert.doesNotMatch(tmuxLog, /set-hook -u|kill-pane|split-window|resize-pane|select-pane|run-shell/);
@@ -8887,10 +8948,7 @@ case "$1" in
     ;;
   show-option)
     case "$*" in
-      *"-p -t %11 @omx_team_pane_owner_id"*)
-        echo "team:team-worker-owner-read-error"
-        ;;
-      *"-p -t %12 @omx_team_pane_owner_id"*)
+      *"-p -t %11 @omx_team_pane_owner_id"*|*"-p -t %12 @omx_team_pane_owner_id"*|*"-p -t %13 @omx_team_pane_owner_id"*)
         echo "team:team-worker-owner-read-error"
         ;;
       *"-p -t %14 @omx_team_pane_owner_id"*)
@@ -9199,10 +9257,7 @@ case "$1" in
     ;;
   show-option)
     case "$*" in
-      *"-p -t %11 @omx_team_pane_owner_id"*)
-        echo "team:team-shutdown-win32-split"
-        ;;
-      *"-p -t %12 @omx_team_pane_owner_id"*)
+      *"-p -t %11 @omx_team_pane_owner_id"*|*"-p -t %12 @omx_team_pane_owner_id"*|*"-p -t %13 @omx_team_pane_owner_id"*|*"-p -t %14 @omx_team_pane_owner_id"*)
         echo "team:team-shutdown-win32-split"
         ;;
       *)
@@ -9308,7 +9363,7 @@ case "$1" in
     ;;
   show-option)
     case "$*" in
-      *"-p -t %11 @omx_team_pane_owner_id"*)
+      *"-p -t %11 @omx_team_pane_owner_id"*|*"-p -t %23 @omx_team_pane_owner_id"*|*"-p -t %24 @omx_team_pane_owner_id"*)
         echo "team:team-win32-stale-topo"
         ;;
       *)
@@ -9612,10 +9667,7 @@ case "$1" in
     ;;
   show-option)
     case "$*" in
-      *"-p -t %11 @omx_team_pane_owner_id"*)
-        echo "team:team-shutdown-shared-session"
-        ;;
-      *"-p -t %12 @omx_team_pane_owner_id"*)
+      *"-p -t %11 @omx_team_pane_owner_id"*|*"-p -t %12 @omx_team_pane_owner_id"*|*"-p -t %13 @omx_team_pane_owner_id"*|*"-p -t %14 @omx_team_pane_owner_id"*)
         echo "team:team-shutdown-shared-session"
         ;;
       *)
@@ -9730,10 +9782,7 @@ case "$1" in
     ;;
   show-option)
     case "$*" in
-      *"-p -t %11 @omx_team_pane_owner_id"*)
-        echo "team:team-shutdown-restore-hud"
-        ;;
-      *"-p -t %12 @omx_team_pane_owner_id"*)
+      *"-p -t %11 @omx_team_pane_owner_id"*|*"-p -t %12 @omx_team_pane_owner_id"*|*"-p -t %13 @omx_team_pane_owner_id"*)
         echo "team:team-shutdown-restore-hud"
         ;;
       *)
@@ -10103,10 +10152,7 @@ case "$1" in
     ;;
   show-option)
     case "$*" in
-      *"-p -t %11 @omx_team_pane_owner_id"*)
-        echo "team:team-unpersisted-legacy-worker"
-        ;;
-      *"-p -t %12 @omx_team_pane_owner_id"*)
+      *"-p -t %11 @omx_team_pane_owner_id"*|*"-p -t %12 @omx_team_pane_owner_id"*|*"-p -t %13 @omx_team_pane_owner_id"*)
         echo "team:team-unpersisted-legacy-worker"
         ;;
       *)
@@ -10212,10 +10258,7 @@ case "$1" in
     ;;
   show-option)
     case "$*" in
-      *"-p -t %11 @omx_team_pane_owner_id"*)
-        echo "team:team-stale-hud-live-owner"
-        ;;
-      *"-p -t %12 @omx_team_pane_owner_id"*)
+      *"-p -t %11 @omx_team_pane_owner_id"*|*"-p -t %12 @omx_team_pane_owner_id"*|*"-p -t %13 @omx_team_pane_owner_id"*)
         echo "team:team-stale-hud-live-owner"
         ;;
       *)
@@ -10329,6 +10372,9 @@ case "$1" in
         ;;
       *"-p -t %12 @omx_team_pane_owner_id"*)
         exit 1
+        ;;
+      *"-p -t %13 @omx_team_pane_owner_id"*)
+        echo "team:team-legacy-hud-owner"
         ;;
       *)
         exit 1

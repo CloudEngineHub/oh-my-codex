@@ -60,6 +60,7 @@ export { readTeamManifestV2 as teamReadManifest } from './state.js';
 export { writeTeamManifestV2 as teamWriteManifest } from './state.js';
 export { saveTeamConfig as teamSaveConfig } from './state.js';
 export { cleanupTeamState as teamCleanup } from './state.js';
+export { removeDurableFile as teamRemoveDurableFile } from './state.js';
 export { migrateV1ToV2 as teamMigrateV1ToV2 } from './state.js';
 export { normalizeTeamPolicy as teamNormalizePolicy } from './state.js';
 export { normalizeTeamGovernance as teamNormalizeGovernance } from './state.js';

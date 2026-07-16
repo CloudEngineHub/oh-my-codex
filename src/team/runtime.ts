@@ -2,7 +2,7 @@ import { spawnPlatformCommandSync } from '../utils/platform-command.js';
 
 import { join, resolve, dirname } from 'path';
 import { existsSync, appendFileSync, mkdirSync } from 'fs';
-import { mkdir, readdir, readFile, writeFile, rm } from 'fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'fs/promises';
 import { performance } from 'perf_hooks';
 import { spawn, spawnSync, type ChildProcessByStdio } from 'child_process';
 import type { Writable } from 'stream';
@@ -79,6 +79,7 @@ import {
   teamWritePhase as writeTeamPhaseState,
   teamWriteWorkerStatus as writeWorkerStatus,
   writeAtomic,
+  teamRemoveDurableFile as removeDurableFile,
   type TeamConfig,
   type WorkerInfo,
   type WorkerHeartbeat,
@@ -483,9 +484,9 @@ function collectAuthorizedSharedSessionWorkerPaneIds(
       }
       continue;
     }
-    // Legacy canonical workers may not have a team-owner tag. Do not use the
-    // same compatibility rule to acquire unpersisted discovered panes.
-    if (canonicalWorkerPaneIds.has(paneId)) authorized.add(paneId);
+    if (canonicalWorkerPaneIds.has(paneId)) {
+      throw new Error(`shutdown_shared_session_worker_owner_changed:${paneId}`);
+    }
   }
   return [...authorized];
 }
@@ -593,15 +594,24 @@ function destroyConfiguredDetachedTeamSession(config: TeamConfig): void {
   if (owner.status !== 'value' || owner.value !== ownerId) {
     throw new Error(`detached_session_destroy_authorization_unavailable:${sessionName}`);
   }
+  // These are the final reads before the destructive tmux effect. Re-read the
+  // pane PID and canonical owner after every earlier teardown read, then prove
+  // the leader still belongs to precisely this detached session.
   const finalProof = readExactPaneProofSync(proof.paneId);
   if (finalProof.status !== 'live' || finalProof.pid !== leaderPanePid) {
     throw new Error(`detached_session_destroy_authorization_unavailable:${sessionName}`);
   }
-  if (!hasAuthoritativeDetachedSessionLeaderBinding({
-    sessionName,
-    leaderPaneId: finalProof.paneId,
-    leaderPanePid,
-  })) {
+  const finalOwner = readPaneTeamOwnerTagResult(finalProof.paneId);
+  if (finalOwner.status !== 'value' || finalOwner.value !== ownerId) {
+    throw new Error(`detached_session_destroy_authorization_unavailable:${sessionName}`);
+  }
+  const adjacentProof = readExactPaneProofSync(finalProof.paneId);
+  if (adjacentProof.status !== 'live' || adjacentProof.pid !== leaderPanePid
+    || !hasAuthoritativeDetachedSessionLeaderBinding({
+      sessionName,
+      leaderPaneId: adjacentProof.paneId,
+      leaderPanePid,
+    })) {
     throw new Error(`detached_session_destroy_authorization_unavailable:${sessionName}`);
   }
   if (!destroyTeamSession(sessionName)) {
@@ -2762,7 +2772,7 @@ async function reconcileGonePaneDescendantCleanupDebt(teamName: string, cwd: str
     if (states.some((state: string) => state !== 'gone')) unresolved.push(entry);
   }
   if (unresolved.length === 0) {
-    await rm(debtPath, { force: true });
+    await removeDurableFile(debtPath);
     return;
   }
   await writeAtomic(debtPath, JSON.stringify({ ...debt, entries: unresolved }, null, 2));
@@ -4891,26 +4901,18 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
       });
       assertPaneTeardownProofsAvailable('shutdown', unavailable);
     };
-    const frozenSharedWorkerOwnerIds = new Map<string, string | null>();
-    if (sharedSessionTopology) {
+    const frozenSharedWorkerOwnerIds = new Map<string, string>();
+    if (sharedSessionTopology && shouldPrekillInteractiveShutdownProcessTrees(sessionName)) {
       assertCompleteSharedWorkerPaneProofs();
       for (const paneId of canonicalWorkerPaneIds) {
         const owner = readPaneTeamOwnerTagResult(paneId);
         if (owner.status === 'error') {
           throw new Error(`shutdown_shared_session_worker_owner_unavailable:${paneId}:${owner.error}`);
         }
-        if (owner.status === 'value') {
-          if (!tmuxPaneOwnerId || owner.value !== tmuxPaneOwnerId) {
-            throw new Error(`shutdown_shared_session_worker_owner_changed:${paneId}`);
-          }
-          frozenSharedWorkerOwnerIds.set(paneId, owner.value);
-        } else if (canonicalExplicitWorkerPaneIds.has(paneId)) {
-          // Legacy persisted workers may lack tags, but that absence is frozen and
-          // must remain absent through the adjacent pre-kill authorization.
-          frozenSharedWorkerOwnerIds.set(paneId, null);
-        } else {
+        if (owner.status !== 'value' || !tmuxPaneOwnerId || owner.value !== tmuxPaneOwnerId) {
           throw new Error(`shutdown_shared_session_worker_owner_changed:${paneId}`);
         }
+        frozenSharedWorkerOwnerIds.set(paneId, owner.value);
       }
     }
     const authorizeFrozenSharedWorkerProcessSignal = (paneId: string, panePid: number): boolean => {
@@ -4920,9 +4922,7 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
       if (sharedSessionTopology && frozenSharedWorkerOwnerIds.has(paneId)) {
         const expectedOwner = frozenSharedWorkerOwnerIds.get(paneId);
         const owner = readPaneTeamOwnerTagResult(paneId);
-        return expectedOwner === null
-          ? owner.status === 'missing'
-          : owner.status === 'value' && owner.value === expectedOwner;
+        return owner.status === 'value' && owner.value === expectedOwner && expectedOwner === tmuxPaneOwnerId;
       }
       const owner = readPaneTeamOwnerTagResult(paneId);
       return owner.status === 'value' && owner.value === tmuxPaneOwnerId;
@@ -5080,9 +5080,9 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
             const expectedOwner = frozenSharedWorkerOwnerIds.get(paneId);
             if (expectedOwner === undefined) return false;
             const currentOwner = readPaneTeamOwnerTagResult(paneId);
-            return expectedOwner === null
-              ? currentOwner.status === 'missing'
-              : currentOwner.status === 'value' && currentOwner.value === expectedOwner;
+            return currentOwner.status === 'value'
+              && currentOwner.value === expectedOwner
+              && expectedOwner === tmuxPaneOwnerId;
           }
           : undefined,
       },
