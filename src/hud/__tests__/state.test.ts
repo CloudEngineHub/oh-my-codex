@@ -904,6 +904,48 @@ describe('readAllState canonical skill precedence', () => {
     });
   });
 
+  it('reads and refreshes only the active session team roster without migrating team state', async () => {
+    await withTempRepo('omx-hud-team-roster-', async (cwd) => {
+      const root = join(cwd, '.omx', 'state');
+      const sessionId = 'sess-roster';
+      const sessionDir = join(root, 'sessions', sessionId);
+      const teamDir = join(root, 'team', 'alpha');
+      const workerDir = join(teamDir, 'workers', 'worker-1');
+      await mkdir(sessionDir, { recursive: true });
+      await mkdir(workerDir, { recursive: true });
+      await writeFile(join(root, 'session.json'), JSON.stringify({ session_id: sessionId, cwd, state_root: root }));
+      const activation = { active: true, skill: 'team', phase: 'team-exec', session_id: sessionId,
+        active_skills: [{ skill: 'team', phase: 'team-exec', active: true, session_id: sessionId }] };
+      await writeFile(join(sessionDir, 'skill-active-state.json'), JSON.stringify(activation));
+      await writeFile(join(sessionDir, 'team-state.json'), JSON.stringify({ active: true, team_name: 'alpha' }));
+      await writeFile(join(root, 'team-state.json'), JSON.stringify({ active: true, team_name: 'other-session' }));
+      await writeFile(join(teamDir, 'config.json'), JSON.stringify({ name: 'alpha', workers: [
+        { name: 'worker-1', role: 'executor', pane_id: '%10' },
+        { name: 'worker-2', role: 'verifier' },
+        { name: '../../outside' },
+        null,
+      ] }));
+      const updatedAt = new Date().toISOString();
+      await writeFile(join(workerDir, 'status.json'), JSON.stringify({ state: 'working', current_task_id: '7', updated_at: updatedAt }));
+
+      const state = await readAllState(cwd);
+      assert.equal(state.team?.team_name, 'alpha');
+      assert.equal(state.team?.workers?.length, 2);
+      assert.deepEqual(state.team?.workers?.[0], { name: 'worker-1', role: 'executor', paneId: '%10', state: 'working', taskId: '7', updatedAt });
+      assert.equal(state.team?.workers?.[1].state, 'unknown');
+      assert.equal(existsSync(join(teamDir, 'manifest.v2.json')), false, 'HUD reads must not migrate team config');
+
+      await writeFile(join(workerDir, 'status.json'), JSON.stringify({ state: 'done', updated_at: updatedAt }));
+      assert.equal((await readAllState(cwd)).team?.workers?.[0].state, 'done');
+      await writeFile(join(workerDir, 'status.json'), 'malformed');
+      assert.equal((await readAllState(cwd)).team?.workers?.[0].state, 'unknown');
+      await writeFile(join(teamDir, 'manifest.v2.json'), JSON.stringify({ name: 'alpha', workers: [{ name: 'worker-3' }] }));
+      assert.deepEqual((await readAllState(cwd)).team?.workers?.map(worker => worker.name), ['worker-3'], 'canonical manifest membership wins over legacy config');
+      await writeFile(join(sessionDir, 'skill-active-state.json'), JSON.stringify({ ...activation, active: false, active_skills: [] }));
+      assert.equal((await readAllState(cwd)).team, null);
+    });
+  });
+
   it('prefers canonical team phase over stale team detail current_phase', async () => {
     await withTempRepo('omx-hud-canonical-team-phase-', async (cwd) => {
       const rootStateDir = join(cwd, '.omx', 'state');

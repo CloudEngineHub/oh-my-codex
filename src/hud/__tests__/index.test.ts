@@ -337,9 +337,9 @@ describe('runWatchMode', () => {
     await promise;
 
     const plain = writes.join('').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
-    assert.equal((plain.match(/team:2 workers/g) ?? []).length, 1);
+    assert.equal((plain.match(/team:hud-fix \(2 workers\)/g) ?? []).length, 1);
     assert.equal((plain.match(/ultragoal 1\/3/g) ?? []).length, 1);
-    assert.ok(plain.includes('ultragoal 1/3 + team:2 workers'));
+    assert.ok(plain.includes('ultragoal 1/3 + team:hud-fix (2 workers)'));
     assert.ok(plain.includes('G002-team: Team HUD summary'));
     assert.ok(!plain.includes('G003-next: Next team checkpoint (pending)'));
   });
@@ -383,6 +383,50 @@ describe('runWatchMode', () => {
     await promise;
 
     assert.deepEqual(maxLines, [3]);
+  });
+
+  it('expands for each worker, refreshes reported status, and shrinks after team completion', async () => {
+    const frames: string[] = [];
+    const heights: number[] = [];
+    let tick: (() => void) | undefined;
+    let stop: (() => void) | undefined;
+    let frame = 0;
+    const workers = Array.from({ length: 15 }, (_, i) => ({ name: `worker-${i + 1}`, state: 'working' as const }));
+    const promise = runWatchMode('/tmp', WATCH_FLAGS, {
+      isTTY: true,
+      env: { TMUX: 'tmux', TMUX_PANE: '%hud', [OMX_TMUX_HUD_OWNER_ENV]: '1' },
+      isSessionAttachedFn: () => true,
+      readAllStateFn: async () => ({ ...emptyCtx(), team: frame === 2 ? null : {
+        active: true, team_name: 'checkout', workers: workers.map(worker => ({ ...worker, state: frame === 0 ? 'working' : 'done' })),
+      } }),
+      readHudConfigFn: async () => ({ preset: 'focused', git: { display: 'repo-branch' }, statusLine: { preset: 'focused' } }),
+      renderHudFn: renderHud,
+      writeStdout: text => { frames.push(text); },
+      writeStderr: () => {},
+      registerSigint: handler => { stop = handler; },
+      setIntervalFn: handler => { tick = handler; return {} as ReturnType<typeof setInterval>; },
+      clearIntervalFn: () => {},
+      resizeTmuxPaneFn: (_pane, height) => { heights.push(height); return true; },
+      clearTmuxPaneHistoryFn: () => true,
+      registerHudResizeHookFn: () => true,
+      runAuthorityTickFn: async () => {},
+    });
+    try {
+      await flush();
+      assert.ok(frames.at(-1)?.includes('worker-15 working'));
+      frame = 1;
+      tick?.();
+      await flush();
+      assert.ok(frames.at(-1)?.includes('worker-15 done'));
+      frame = 2;
+      tick?.();
+      await flush();
+      assert.ok(!frames.at(-1)?.includes('worker-15'));
+      assert.deepEqual(heights, [17, 2]);
+    } finally {
+      stop?.();
+      await promise;
+    }
   });
 
   it('passes compact no-ultragoal line budget to watch rendering', async () => {

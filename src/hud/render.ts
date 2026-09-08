@@ -4,7 +4,7 @@
  * Renders HudRenderContext into formatted ANSI strings.
  */
 
-import type { HudRenderContext, HudPreset } from './types.js';
+import type { HudRenderContext, HudPreset, TeamWorkerForHud } from './types.js';
 import { green, yellow, cyan, dim, bold, magenta, getRalphColor, isColorEnabled, RESET } from './colors.js';
 import { HUD_TMUX_HEIGHT_LINES, HUD_TMUX_MAX_HEIGHT_LINES, HUD_TMUX_ULTRAGOAL_HEIGHT_LINES } from './constants.js';
 
@@ -173,11 +173,11 @@ function renderUltraqa(ctx: HudRenderContext): string | null {
 }
 
 function formatTeamSummary(ctx: HudRenderContext): string | null {
-  if (!ctx.team) return null;
+  if (!ctx.team?.active) return null;
   const count = ctx.team.agent_count;
-  const name = ctx.team.team_name ? sanitizeDynamicText(ctx.team.team_name) : '';
-  if (count !== undefined && count > 0) {
-    return `team:${count} workers`;
+  const name = ctx.team.team_name ? sanitizeDynamicText(ctx.team.team_name).trim() : '';
+  if (count !== undefined && Number.isSafeInteger(count) && count > 0) {
+    return name ? `team:${name} (${count} workers)` : `team:${count} workers`;
   }
   if (name) {
     return `team:${name}`;
@@ -200,14 +200,31 @@ function truncateDynamicText(value: string, maxLength: number): string {
   return normalizeTrailingEllipsis(`${value.slice(0, maxLength - 1).trimEnd()}…`);
 }
 
-export function getHudRenderMaxLines(ctx: Pick<HudRenderContext, 'ultragoal'>): number {
-  return ctx.ultragoal?.active ? HUD_TMUX_ULTRAGOAL_HEIGHT_LINES : HUD_TMUX_HEIGHT_LINES;
+export function getHudRenderMaxLines(ctx: Pick<HudRenderContext, 'ultragoal' | 'team'>): number {
+  const summaryLines = ctx.ultragoal?.active ? HUD_TMUX_ULTRAGOAL_HEIGHT_LINES : HUD_TMUX_HEIGHT_LINES;
+  return summaryLines + (ctx.team?.active ? ctx.team.workers?.length ?? 0 : 0);
 }
 
-function clampHudMaxLines(ctx: Pick<HudRenderContext, 'ultragoal'>, maxLines: number | undefined): number {
+function clampHudMaxLines(ctx: HudRenderContext, maxLines: number | undefined): number {
   const adaptiveMaxLines = getHudRenderMaxLines(ctx);
   if (!Number.isFinite(maxLines ?? Number.NaN) || (maxLines ?? 0) <= 0) return adaptiveMaxLines;
   return Math.min(Math.floor(maxLines ?? adaptiveMaxLines), adaptiveMaxLines);
+}
+
+function renderTeamWorker(worker: TeamWorkerForHud): string {
+  const label = `${sanitizeDynamicText(worker.name)} ${worker.state}`;
+  const status = worker.state === 'working' ? cyan(label)
+    : worker.state === 'done' ? green(label)
+      : worker.state === 'blocked' || worker.state === 'failed' ? yellow(label) : dim(label);
+  const parts = [status];
+  if (worker.taskId) parts.push(`task:${sanitizeDynamicText(worker.taskId)}`);
+  if (worker.role) parts.push(sanitizeDynamicText(worker.role));
+  if (worker.paneId) parts.push(`pane:${sanitizeDynamicText(worker.paneId)}`);
+  if (worker.updatedAt && Number.isFinite(Date.parse(worker.updatedAt))) {
+    const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(worker.updatedAt)) / 1000));
+    parts.push(dim(`updated:${seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m`} ago`));
+  }
+  return parts.join(SEP);
 }
 
 function renderUltragoal(ctx: HudRenderContext): string | null {
@@ -502,7 +519,11 @@ export function renderHud(
   options: RenderHudOptions = {},
 ): string {
   const elements = getElements(preset);
-  const parts = elements
+  // Keep standalone team identity visible before long repository labels.
+  const orderedElements = ctx.team?.active && !ctx.ultragoal?.active
+    ? [renderExecutionSummary, ...elements.filter(fn => fn !== renderExecutionSummary)]
+    : elements;
+  const parts = orderedElements
     .map(fn => fn(ctx))
     .filter((s): s is string => s !== null);
 
@@ -517,7 +538,19 @@ export function renderHud(
     return wrapHudParts(label, [dim('No active modes.')], renderOptions);
   }
 
-  return wrapHudParts(label, parts, renderOptions);
+  const workers = ctx.team?.active ? ctx.team.workers ?? [] : [];
+  if (workers.length === 0) return wrapHudParts(label, parts, renderOptions);
+  const headerBudget = Math.max(1, renderOptions.maxLines - workers.length);
+  const header = wrapHudParts(label, parts, { ...renderOptions, maxLines: headerBudget });
+  const availableRows = renderOptions.maxLines - countRenderedHudLines(header);
+  const overflow = workers.length > availableRows;
+  const visibleWorkers = workers.slice(0, Math.max(0, availableRows - (overflow ? 1 : 0)));
+  const rows = visibleWorkers.map(renderTeamWorker);
+  if (overflow && availableRows > 0) rows.push(dim(`+${workers.length - visibleWorkers.length} workers`));
+  const width = Number.isFinite(options.maxWidth) && (options.maxWidth ?? 0) > 0
+    ? Math.max(12, Math.floor(options.maxWidth ?? 0)) : Infinity;
+  // Keep identity, status, and task ahead of optional metadata on narrow panes.
+  return [header, ...rows.map(row => visibleLength(row) > width ? `${sliceAnsiVisible(row, 0, width - 1)}…` : row)].join('\n');
 }
 
 export function countRenderedHudLines(text: string): number {
