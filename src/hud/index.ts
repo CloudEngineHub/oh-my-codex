@@ -24,7 +24,7 @@ import {
   killTmuxPane,
   boundHudHeight,
   listCurrentWindowPanes,
-  listCurrentWindowHudPaneIds,
+  findHudWatchPaneIds,
   OMX_TMUX_HUD_LEADER_PANE_ENV,
   readActiveTmuxPaneId,
   registerHudResizeHook,
@@ -32,7 +32,7 @@ import {
   resizeTmuxPane,
   shellEscapeSingle,
 } from './tmux.js';
-import { OMX_TMUX_HUD_OWNER_ENV, reconcileHudForPromptSubmit } from './reconcile.js';
+import { OMX_TMUX_HUD_OWNER_ENV, needsHudTopologyRecreate, reconcileHudForPromptSubmit } from './reconcile.js';
 import { buildHudRuntimeEnv } from './tmux.js';
 
 export const HUD_USAGE = [
@@ -520,14 +520,18 @@ async function launchTmuxPane(cwd: string, flags: HudFlags): Promise<void> {
   const currentPaneId = envPaneId || readActiveTmuxPaneId() || undefined;
   const leaderPaneId = currentPaneId;
   const sessionId = process.env.OMX_SESSION_ID?.trim() || undefined;
+  const panes = listCurrentWindowPanes(undefined, leaderPaneId);
   const existingHudPaneIds = leaderPaneId || sessionId
-    ? listCurrentWindowHudPaneIds(leaderPaneId, undefined, leaderPaneId ? { leaderPaneId } : { sessionId })
+    ? findHudWatchPaneIds(panes, leaderPaneId, leaderPaneId ? { leaderPaneId } : { sessionId })
     : [];
-  if (existingHudPaneIds.length >= 1) {
-    const [keeperPaneId, ...duplicatePaneIds] = existingHudPaneIds;
-    for (const paneId of duplicatePaneIds) {
-      killTmuxPane(paneId);
-    }
+  const leaderPane = panes.find(pane => pane.paneId === leaderPaneId);
+  const keeperPaneId = panes.find(pane => existingHudPaneIds.includes(pane.paneId)
+    && !needsHudTopologyRecreate(pane, leaderPane))?.paneId;
+  const duplicatePaneIds = existingHudPaneIds.filter(paneId => paneId !== keeperPaneId);
+  for (const paneId of duplicatePaneIds) {
+    killTmuxPane(paneId);
+  }
+  if (keeperPaneId) {
     const config = await readHudConfig(cwd);
     const ctx = await readAllState(cwd, config);
     const desiredHeight = boundHudHeight(getHudRenderMaxLines(ctx), listCurrentWindowPanes(undefined, leaderPaneId), leaderPaneId, keeperPaneId);

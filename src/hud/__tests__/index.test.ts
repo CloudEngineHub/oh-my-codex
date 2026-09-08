@@ -686,6 +686,77 @@ describe('runWatchMode', () => {
 });
 
 describe('hudCommand --tmux', () => {
+  for (const keepValidPane of [true, false]) {
+    it(`selects a topology-valid HUD before cleanup and measures fresh geometry (keeper=${keepValidPane})`, async () => {
+      const tmp = await mkdtemp(join(tmpdir(), 'omx-hud-launch-keeper-'));
+      const logPath = join(tmp, 'tmux.log');
+      const panePath = join(tmp, 'panes.json');
+      const fakeBin = join(tmp, 'bin');
+      const root = join(tmp, '.omx', 'state');
+      const sessionDir = join(root, 'sessions', 'sess-a');
+      const teamDir = join(root, 'team', 'alpha');
+      await Promise.all([mkdir(fakeBin), mkdir(sessionDir, { recursive: true }), mkdir(teamDir, { recursive: true })]);
+      await writeFile(join(root, 'session.json'), JSON.stringify({ session_id: 'sess-a', cwd: tmp, state_root: root }));
+      await writeFile(join(sessionDir, 'team-state.json'), JSON.stringify({ active: true, team_name: 'alpha' }));
+      await writeFile(join(sessionDir, 'skill-active-state.json'), JSON.stringify({ active: true, skill: 'team', phase: 'team-exec', session_id: 'sess-a',
+        active_skills: [{ skill: 'team', phase: 'team-exec', active: true, session_id: 'sess-a' }] }));
+      await writeFile(join(teamDir, 'config.json'), JSON.stringify({ name: 'alpha', workers: Array.from({ length: 20 }, (_, i) => ({ name: `worker-${i + 1}` })) }));
+      const command = "env OMX_SESSION_ID='sess-a' OMX_TMUX_HUD_OWNER='1' OMX_TMUX_HUD_LEADER_PANE='%1' node omx hud --watch";
+      await writeFile(panePath, JSON.stringify([
+        ['%1', 'codex', 0, 0, 80, 12, 11, 160, 50, 'codex', tmp, 0, 1001],
+        ['%2', 'node', 81, 0, 79, 50, 49, 160, 50, command, tmp, 0, 1002],
+        ...(keepValidPane ? [['%3', 'node', 0, 13, 80, 3, 15, 160, 50, command, tmp, 0, 1003]] : []),
+      ]));
+      const shim = join(fakeBin, 'tmux');
+      await writeFile(shim, `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, args.join(' ') + '\\n');
+let panes = JSON.parse(fs.readFileSync(${JSON.stringify(panePath)}, 'utf8'));
+if (args[0] === 'list-panes') {
+  console.log(panes.map(pane => args.at(-1) === '#{pane_id}' ? pane[0] : pane.join('\\x1f')).join('\\n'));
+} else if (args[0] === 'kill-pane') {
+  panes = panes.filter(pane => pane[0] !== args[2]);
+  panes[0][5] = 8;
+  fs.writeFileSync(${JSON.stringify(panePath)}, JSON.stringify(panes));
+} else if (args[0] === 'display-message') {
+  console.log('$7\\t@3');
+}
+`);
+      await chmod(shim, 0o755);
+      const keys = ['PATH', 'TMUX', 'TMUX_PANE', 'OMX_SESSION_ID', 'OMX_ROOT', 'OMX_STATE_ROOT', 'OMX_TEAM_STATE_ROOT'];
+      const previousEnv = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+      const previousLog = console.log;
+      try {
+        process.env.PATH = `${fakeBin}${delimiter}${process.env.PATH ?? ''}`;
+        process.env.TMUX = 'private-test';
+        process.env.TMUX_PANE = '%1';
+        process.env.OMX_SESSION_ID = 'sess-a';
+        process.env.OMX_STATE_ROOT = tmp;
+        delete process.env.OMX_ROOT;
+        delete process.env.OMX_TEAM_STATE_ROOT;
+        console.log = () => {};
+        await hudCommand(['--tmux'], { cwd: tmp });
+        const log = await readFile(logPath, 'utf8');
+        assert.match(log, /kill-pane -t %2/);
+        assert.doesNotMatch(log, /kill-pane -t %3|resize-pane -t %2/);
+        if (keepValidPane) {
+          assert.match(log, /resize-pane -t %3 -y 5/);
+          assert.doesNotMatch(log, /split-window/);
+        } else {
+          assert.match(log, /split-window -v -l 3 -t %1/);
+        }
+      } finally {
+        console.log = previousLog;
+        for (const [key, value] of Object.entries(previousEnv)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+        await rm(tmp, { recursive: true, force: true });
+      }
+    });
+  }
+
   it('does not reuse duplicate HUD snapshots without complete current authority', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'omx-hud-tmux-duplicate-test-'));
     const logPath = join(tmp, 'tmux.log');
