@@ -14,7 +14,6 @@ import type { RuntimeSnapshot } from '../runtime/bridge.js';
 import { getBaseStateDir, getStateFilePath, readCurrentSessionId, resolveRuntimeStateScope } from '../mcp/state-paths.js';
 import { ABSOLUTE_MAX_WORKERS, teamReadPhase as readTeamPhase, teamReadWorkerStatus } from '../team/team-ops.js';
 import { TEAM_NAME_SAFE_PATTERN, WORKER_NAME_SAFE_PATTERN } from '../team/contracts.js';
-import { resolveCanonicalTeamStateRoot } from '../team/state-root.js';
 
 import { listActiveSkills, readVisibleSkillActiveStateForStateDir } from '../state/skill-active.js';
 import {
@@ -440,10 +439,10 @@ export async function readTeamState(cwd: string): Promise<TeamStateForHud | null
   return state?.active ? readTeamWorkers(cwd, state) : null;
 }
 
-async function readTeamWorkers(cwd: string, team: TeamStateForHud | null): Promise<TeamStateForHud | null> {
+async function readTeamWorkers(cwd: string, team: TeamStateForHud | null, stateRoot = getBaseStateDir(cwd)): Promise<TeamStateForHud | null> {
   const name = sanitizeOptionalString(team?.team_name);
   if (!team?.active || !name || !TEAM_NAME_SAFE_PATTERN.test(name)) return team;
-  const teamDir = join(resolveCanonicalTeamStateRoot(cwd), 'team', name);
+  const teamDir = join(stateRoot, 'team', name);
   // Lifecycle config readers can migrate/recover state. A HUD tick must only read.
   const manifest = await readJsonFile<{ name?: unknown; workers?: unknown }>(join(teamDir, 'manifest.v2.json'));
   const config = manifest ?? await readJsonFile<{ name?: unknown; workers?: unknown }>(join(teamDir, 'config.json'));
@@ -457,7 +456,7 @@ async function readTeamWorkers(cwd: string, team: TeamStateForHud | null): Promi
   });
   const workers = await Promise.all(members.map(async member => {
     const workerName = member.name;
-    const status = await teamReadWorkerStatus(name, workerName, cwd);
+    const status = await teamReadWorkerStatus(name, workerName, cwd, stateRoot);
     return {
       name: workerName,
       role: sanitizeOptionalString(member.role),
@@ -911,7 +910,7 @@ export async function readAllState(cwd: string, config: ResolvedHudConfig = DEFA
     autoresearch,
     codeReview,
     ultraqa,
-    team: await readTeamWorkers(cwd, team),
+    team: await readTeamWorkers(cwd, team, stateDir),
     guardexFinish,
     metrics,
     hudNotify,

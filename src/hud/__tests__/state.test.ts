@@ -12,6 +12,7 @@ import {
   buildGitBranchLabel,
   readGitBranch,
   readAllState,
+  readTeamState,
   readHudNotifyState,
   readRalphState,
   readRalplanState,
@@ -943,6 +944,54 @@ describe('readAllState canonical skill precedence', () => {
       assert.deepEqual((await readAllState(cwd)).team?.workers?.map(worker => worker.name), ['worker-3'], 'canonical manifest membership wins over legacy config');
       await writeFile(join(sessionDir, 'skill-active-state.json'), JSON.stringify({ ...activation, active: false, active_skills: [] }));
       assert.equal((await readAllState(cwd)).team, null);
+    });
+  });
+
+  it('reads descendant HUD membership and statuses from the selected ancestor or explicit root', async () => {
+    await withTempRepo('omx-hud-descendant-roster-', async cwd => {
+      const descendant = join(cwd, 'packages', 'app');
+      const root = join(cwd, '.omx', 'state');
+      const sessionId = 'sess-ancestor-roster';
+      const sessionDir = join(root, 'sessions', sessionId);
+      const teamDir = join(root, 'team', 'alpha');
+      const workerDir = join(teamDir, 'workers', 'worker-1');
+      const shadowTeam = join(descendant, '.omx', 'state', 'team', 'alpha');
+      await mkdir(sessionDir, { recursive: true });
+      await mkdir(workerDir, { recursive: true });
+      await mkdir(join(shadowTeam, 'workers', 'worker-1'), { recursive: true });
+      await writeFile(join(root, 'session.json'), JSON.stringify({ session_id: sessionId, cwd, state_root: root }));
+      await writeFile(join(sessionDir, 'team-state.json'), JSON.stringify({ active: true, team_name: 'alpha' }));
+      await writeFile(join(sessionDir, 'skill-active-state.json'), JSON.stringify({ active: true, skill: 'team', phase: 'team-exec', session_id: sessionId,
+        active_skills: [{ skill: 'team', phase: 'team-exec', active: true, session_id: sessionId }] }));
+      const config = { name: 'alpha', workers: [{ name: 'worker-1', role: 'executor', pane_id: '%10' }] };
+      await writeFile(join(teamDir, 'config.json'), JSON.stringify(config));
+      await writeFile(join(shadowTeam, 'config.json'), JSON.stringify({ name: 'alpha', workers: [{ name: 'worker-1', role: 'wrong-root' }] }));
+      await writeFile(join(shadowTeam, 'workers', 'worker-1', 'status.json'), JSON.stringify({ state: 'done', updated_at: new Date().toISOString() }));
+      const keys = ['OMX_SESSION_ID', 'OMX_ROOT', 'OMX_STATE_ROOT', 'OMX_TEAM_STATE_ROOT'] as const;
+      const saved = keys.map(key => process.env[key]);
+      try {
+        for (const selector of [undefined, 'OMX_ROOT', 'OMX_STATE_ROOT', 'OMX_TEAM_STATE_ROOT'] as const) {
+          for (const key of keys) delete process.env[key];
+          process.env.OMX_SESSION_ID = sessionId;
+          if (selector) process.env[selector] = selector === 'OMX_TEAM_STATE_ROOT' ? root : cwd;
+          await writeFile(join(workerDir, 'status.json'), JSON.stringify({ state: 'working', current_task_id: '7', updated_at: new Date().toISOString() }));
+          for (const team of [await readTeamState(descendant), (await readAllState(descendant)).team]) {
+            assert.equal(team?.workers?.length, 1, selector ?? 'ancestor session');
+            assert.equal(team?.workers?.[0].role, 'executor', selector ?? 'ancestor session');
+            assert.equal(team?.workers?.[0].state, 'working', selector ?? 'ancestor session');
+            assert.equal(team?.workers?.[0].taskId, '7', selector ?? 'ancestor session');
+          }
+          await writeFile(join(workerDir, 'status.json'), JSON.stringify({ state: 'blocked', updated_at: new Date().toISOString() }));
+          assert.equal((await readAllState(descendant)).team?.workers?.[0].state, 'blocked');
+          assert.equal(existsSync(join(teamDir, 'manifest.v2.json')), false);
+        }
+      } finally {
+        keys.forEach((key, index) => {
+          const previous = saved[index];
+          if (previous === undefined) delete process.env[key];
+          else process.env[key] = previous;
+        });
+      }
     });
   });
 
