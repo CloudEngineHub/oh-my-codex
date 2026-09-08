@@ -340,6 +340,26 @@ describe('renderHud – ultraqa', () => {
 // ── Team ──────────────────────────────────────────────────────────────────────
 
 describe('renderHud – team', () => {
+  it('colors reported working agents green', () => {
+    const ctx = { ...emptyCtx(), team: { active: true, workers: [{ name: 'worker-1', state: 'working' as const }] } };
+    assert.ok(renderHud(ctx, 'focused').includes(`${GREEN}worker-1 working${RESET}`));
+  });
+
+  it('aligns worker columns despite different names, states, roles, and missing task IDs', () => {
+    const ctx = { ...emptyCtx(), team: { active: true, workers: [
+      { name: 'worker-1', state: 'working' as const, taskId: '2', role: 'executor', paneId: '%9' },
+      { name: 'worker-15', state: 'blocked' as const, role: 'verifier', paneId: '%100' },
+      { name: 'reviewer', state: 'idle' as const, taskId: '123', role: 'reviewer', paneId: '%11' },
+    ] } };
+    const rows = stripSgr(renderHud(ctx, 'focused', { maxWidth: 100 })).split('\n').slice(1);
+    assert.equal(rows.length, 3);
+    const separators = rows.map(row => [...row.matchAll(/\|/g)].map(match => match.index));
+    assert.deepEqual(separators[0], separators[1]);
+    assert.deepEqual(separators[1], separators[2]);
+    assert.equal(rows[0].indexOf('working'), rows[1].indexOf('blocked'));
+    assert.equal(rows[1].indexOf('blocked'), rows[2].indexOf('idle'));
+  });
+
   it('shows every worker on its own live-status row, including a fifteen-worker team', () => {
     const workers = Array.from({ length: 15 }, (_, i) => ({
       name: `worker-${i + 1}`,
@@ -353,7 +373,7 @@ describe('renderHud – team', () => {
       const lines = stripSgr(renderHud(ctx, preset, { maxWidth: 80 })).split('\n');
       assert.equal(getHudRenderMaxLines(ctx), 17);
       for (const worker of workers) {
-        assert.equal(lines.filter(line => line.includes(`${worker.name} working`)).length, 1);
+        assert.equal(lines.filter(line => new RegExp(`${worker.name}\\s+working`).test(line)).length, 1);
         assert.ok(lines.some(line => line.includes(`task:${worker.taskId} `) && line.includes(worker.paneId)));
       }
       assert.ok(lines.every(line => line.length <= 80));

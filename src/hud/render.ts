@@ -211,20 +211,34 @@ function clampHudMaxLines(ctx: HudRenderContext, maxLines: number | undefined): 
   return Math.min(Math.floor(maxLines ?? adaptiveMaxLines), adaptiveMaxLines);
 }
 
-function renderTeamWorker(worker: TeamWorkerForHud): string {
-  const label = `${sanitizeDynamicText(worker.name)} ${worker.state}`;
-  const status = worker.state === 'working' ? cyan(label)
-    : worker.state === 'done' ? green(label)
-      : worker.state === 'blocked' || worker.state === 'failed' ? yellow(label) : dim(label);
-  const parts = [status];
-  if (worker.taskId) parts.push(`task:${sanitizeDynamicText(worker.taskId)}`);
-  if (worker.role) parts.push(sanitizeDynamicText(worker.role));
-  if (worker.paneId) parts.push(`pane:${sanitizeDynamicText(worker.paneId)}`);
-  if (worker.updatedAt && Number.isFinite(Date.parse(worker.updatedAt))) {
-    const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(worker.updatedAt)) / 1000));
-    parts.push(dim(`updated:${seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m`} ago`));
-  }
-  return parts.join(SEP);
+function renderTeamWorkers(workers: TeamWorkerForHud[]): string[] {
+  const cells = workers.map(worker => {
+    let updated = '';
+    if (worker.updatedAt && Number.isFinite(Date.parse(worker.updatedAt))) {
+      const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(worker.updatedAt)) / 1000));
+      updated = `updated:${seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m`} ago`;
+    }
+    return [
+      sanitizeDynamicText(worker.name), worker.state,
+      worker.taskId ? `task:${sanitizeDynamicText(worker.taskId)}` : '',
+      worker.role ? sanitizeDynamicText(worker.role) : '',
+      worker.paneId ? `pane:${sanitizeDynamicText(worker.paneId)}` : '',
+      updated,
+    ];
+  });
+  const columns = [0, 1, 2, 3, 4, 5].filter(column => column < 2 || cells.some(row => row[column]));
+  const widths = columns.map(column => Math.max(...cells.map(row => visibleLength(row[column] || '-'))));
+  return cells.map((row, index) => {
+    const padded = columns.map((column, position) => {
+      const value = row[column] || '-';
+      return position === columns.length - 1 ? value : value + ' '.repeat(widths[position] - visibleLength(value));
+    });
+    const label = `${padded[0]} ${padded[1]}`;
+    const state = workers[index].state;
+    const status = state === 'working' || state === 'done' ? green(label)
+      : state === 'blocked' || state === 'failed' ? yellow(label) : dim(label);
+    return [status, ...padded.slice(2).map((value, position) => columns[position + 2] === 5 ? dim(value) : value)].join(SEP);
+  });
 }
 
 function renderUltragoal(ctx: HudRenderContext): string | null {
@@ -545,7 +559,7 @@ export function renderHud(
   const availableRows = renderOptions.maxLines - countRenderedHudLines(header);
   const overflow = workers.length > availableRows;
   const visibleWorkers = workers.slice(0, Math.max(0, availableRows - (overflow ? 1 : 0)));
-  const rows = visibleWorkers.map(renderTeamWorker);
+  const rows = renderTeamWorkers(workers).slice(0, visibleWorkers.length);
   if (overflow && availableRows > 0) rows.push(dim(`+${workers.length - visibleWorkers.length} workers`));
   const width = Number.isFinite(options.maxWidth) && (options.maxWidth ?? 0) > 0
     ? Math.max(12, Math.floor(options.maxWidth ?? 0)) : Infinity;
