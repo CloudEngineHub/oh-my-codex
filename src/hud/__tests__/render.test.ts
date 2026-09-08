@@ -473,6 +473,15 @@ describe('renderHud – team', () => {
     };
     const result = stripSgr(renderHud(ctx, 'focused'));
     assert.ok(result.includes('ultragoal 1/2 + team:checkout (3 workers)'));
+    const crowded = { ...ctx, gitBranch: 'long-repository/'.repeat(12),
+      ralph: { active: true, iteration: 2, max_iterations: 10 },
+      ultrawork: { active: true }, autopilot: { active: true, current_phase: 'implementing' },
+      ralplan: { active: true, current_phase: 'consensus' },
+    };
+    for (const preset of ['minimal', 'focused', 'full'] as const) {
+      const narrow = stripSgr(renderHud(crowded, preset, { maxWidth: 55, maxLines: 3 }));
+      assert.ok(narrow.startsWith('[OMX] ultragoal 1/2 + team:checkout (3 workers)'), narrow);
+    }
     assert.equal(result.split('team:checkout').length - 1, 1);
   });
 

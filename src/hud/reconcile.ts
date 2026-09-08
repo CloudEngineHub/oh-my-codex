@@ -7,6 +7,7 @@ import { getHudRenderMaxLines } from './render.js';
 import { HUD_TMUX_HEIGHT_LINES, isTmuxWindowTooCrampedForHudSplit } from './constants.js';
 import {
   buildHudWatchCommand,
+  boundHudHeight,
   createHudWatchPane,
   findLegacyFocusedHudWatchPaneIds,
   findHudWatchPaneIds,
@@ -529,7 +530,8 @@ export async function reconcileHudForPromptSubmit(
   const hudConfig = await readHudConfigFn(cwd).catch(() => null);
   const readAllStateFn = deps.readAllState ?? readAllState;
   const hudState = hudConfig ? await readAllStateFn(cwd, hudConfig).catch(() => null) : null;
-  const desiredHeight = hudState ? getHudRenderMaxLines(hudState) : HUD_TMUX_HEIGHT_LINES;
+  const desiredHeight = boundHudHeight(hudState ? getHudRenderMaxLines(hudState) : HUD_TMUX_HEIGHT_LINES,
+    panes, currentPaneId, hudPaneIds[0]);
   const preset = hudConfig?.preset;
   const hudCmd = buildHudWatchCommand(omxBin, preset, resolvedSessionId, env.OMX_ROOT, currentPaneId, {
     omxStateRoot: env.OMX_STATE_ROOT,

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'child_process';
 import { existsSync } from 'fs';
-import { HUD_RESIZE_RECONCILE_DELAY_SECONDS, HUD_TMUX_HEIGHT_LINES } from './constants.js';
+import { HUD_RESIZE_RECONCILE_DELAY_SECONDS, HUD_TMUX_HEIGHT_LINES, HUD_TMUX_MAX_HEIGHT_LINES } from './constants.js';
 import { resolveTmuxBinaryForPlatform } from '../utils/platform-command.js';
 import { resolveOmxCliEntryPath } from '../utils/paths.js';
 
@@ -19,6 +19,28 @@ export interface TmuxPaneSnapshot {
   paneBottom?: number;
   windowWidth?: number;
   windowHeight?: number;
+}
+
+/** Leave at least half the leader/HUD space for the leader, excluding the border. */
+export function boundHudHeight(
+  desiredHeight: number,
+  panes: TmuxPaneSnapshot[],
+  leaderPaneId?: string,
+  hudPaneId?: string,
+): number {
+  const leader = panes.find(pane => pane.paneId === leaderPaneId);
+  const hud = panes.find(pane => pane.paneId === hudPaneId);
+  const windowHeight = leader?.windowHeight ?? hud?.windowHeight;
+  const leaderHeight = leader?.paneHeight;
+  const budgets: number[] = [];
+  if (typeof windowHeight === 'number' && Number.isFinite(windowHeight) && windowHeight > 0) budgets.push(windowHeight - 1);
+  if (typeof leaderHeight === 'number' && Number.isFinite(leaderHeight) && leaderHeight > 0) {
+    const hudHeight = hud?.paneHeight;
+    budgets.push(leaderHeight + (typeof hudHeight === 'number' && Number.isFinite(hudHeight) && hudHeight > 0 ? hudHeight : -1));
+  }
+  // Unknown geometry must not permit an unbounded roster expansion.
+  const limit = budgets.length ? Math.max(1, Math.floor(Math.min(...budgets) / 2)) : HUD_TMUX_MAX_HEIGHT_LINES;
+  return Math.min(desiredHeight, limit);
 }
 
 export const OMX_TMUX_HUD_LEADER_PANE_ENV = 'OMX_TMUX_HUD_LEADER_PANE';
@@ -957,7 +979,11 @@ function buildAtomicHudResizeCommand(
   context: HudResizeHookContext,
   tmuxEnv?: string,
 ): string {
-  return buildAtomicHudHookCommand(tmuxBin, context, `resize-pane -t ${hudPaneId} -y ${height}`, tmuxEnv);
+  // On client resize, never regrow a roster using a stale pre-resize height.
+  // The watch/reconcile paths remeasure the leader before allowing expansion.
+  const safeHeight = Number(height) > HUD_TMUX_MAX_HEIGHT_LINES
+    ? `"#{?#{<:#{pane_height},${height}},#{pane_height},${height}}"` : height;
+  return buildAtomicHudHookCommand(tmuxBin, context, `resize-pane -t ${hudPaneId} -y ${safeHeight}`, tmuxEnv);
 }
 
 function buildHudResizeHookCommand(

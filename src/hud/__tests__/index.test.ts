@@ -394,9 +394,13 @@ describe('runWatchMode', () => {
     const workers = Array.from({ length: 15 }, (_, i) => ({ name: `worker-${i + 1}`, state: 'working' as const }));
     const promise = runWatchMode('/tmp', WATCH_FLAGS, {
       isTTY: true,
-      env: { TMUX: 'tmux', TMUX_PANE: '%hud', [OMX_TMUX_HUD_OWNER_ENV]: '1' },
+      env: { TMUX: 'tmux', TMUX_PANE: '%hud', [OMX_TMUX_HUD_OWNER_ENV]: '1', [OMX_TMUX_HUD_LEADER_PANE_ENV]: '%leader' },
+      listCurrentWindowPanesFn: () => [
+        { paneId: '%leader', currentCommand: 'codex', startCommand: 'codex', paneHeight: frame === 1 ? 14 : 50, windowHeight: frame === 1 ? 24 : 70 },
+        { paneId: '%hud', currentCommand: 'node', startCommand: 'hud', paneHeight: frame === 1 ? 9 : 19 },
+      ],
       isSessionAttachedFn: () => true,
-      readAllStateFn: async () => ({ ...emptyCtx(), team: frame === 2 ? null : {
+      readAllStateFn: async () => ({ ...emptyCtx(), team: frame === 3 ? null : {
         active: true, team_name: 'checkout', workers: workers.map(worker => ({ ...worker, state: frame === 0 ? 'working' : 'done' })),
       } }),
       readHudConfigFn: async () => ({ preset: 'focused', git: { display: 'repo-branch' }, statusLine: { preset: 'focused' } }),
@@ -409,20 +413,26 @@ describe('runWatchMode', () => {
       resizeTmuxPaneFn: (_pane, height) => { heights.push(height); return true; },
       clearTmuxPaneHistoryFn: () => true,
       registerHudResizeHookFn: () => true,
+      reconcileTmuxHudFn: async () => {},
       runAuthorityTickFn: async () => {},
     });
     try {
       await flush();
-      assert.ok(frames.at(-1)?.includes('worker-15 working'));
+      assert.ok(frames.at(-1)?.includes('worker-15 working'), JSON.stringify({ frames, heights }));
       frame = 1;
       tick?.();
       await flush();
-      assert.ok(frames.at(-1)?.includes('worker-15 done'));
+      assert.ok(frames.at(-1)?.includes('+6 workers'));
+      assert.ok(!frames.at(-1)?.includes('worker-15 done'));
       frame = 2;
       tick?.();
       await flush();
+      assert.ok(frames.at(-1)?.includes('worker-15 done'));
+      frame = 3;
+      tick?.();
+      await flush();
       assert.ok(!frames.at(-1)?.includes('worker-15'));
-      assert.deepEqual(heights, [17, 2]);
+      assert.deepEqual(heights, [17, 11, 17, 2]);
     } finally {
       stop?.();
       await promise;

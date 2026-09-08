@@ -533,8 +533,8 @@ export function renderHud(
   options: RenderHudOptions = {},
 ): string {
   const elements = getElements(preset);
-  // Keep standalone team identity visible before long repository labels.
-  const orderedElements = ctx.team?.active && !ctx.ultragoal?.active
+  // Keep team identity (including combined Ultragoal summaries) ahead of other modes.
+  const orderedElements = ctx.team?.active
     ? [renderExecutionSummary, ...elements.filter(fn => fn !== renderExecutionSummary)]
     : elements;
   const parts = orderedElements

@@ -22,6 +22,8 @@ import { isHudWatchSessionAttached } from './session-attached.js';
 import { resolveOmxCliEntryPath } from '../utils/paths.js';
 import {
   killTmuxPane,
+  boundHudHeight,
+  listCurrentWindowPanes,
   listCurrentWindowHudPaneIds,
   OMX_TMUX_HUD_LEADER_PANE_ENV,
   readActiveTmuxPaneId,
@@ -81,6 +83,7 @@ interface RunWatchModeDependencies {
   renderHudFn: (ctx: HudRenderContext, preset: HudPreset, options?: { maxWidth?: number; maxLines?: number }) => string;
   runAuthorityTickFn: (options: { cwd: string }) => Promise<void>;
   resizeTmuxPaneFn: (paneId: string, heightLines: number) => boolean;
+  listCurrentWindowPanesFn: (paneId?: string) => ReturnType<typeof listCurrentWindowPanes>;
   clearTmuxPaneHistoryFn: (paneId: string) => boolean;
   registerHudResizeHookFn: (hudPaneId: string, leaderPaneId: string | undefined, heightLines: number) => boolean;
   reconcileTmuxHudFn: (cwd: string) => Promise<void>;
@@ -187,6 +190,7 @@ export async function runWatchMode(
       await runHudAuthorityTick({ cwd: authorityCwd });
     }),
     resizeTmuxPaneFn: deps.resizeTmuxPaneFn ?? resizeTmuxPane,
+    listCurrentWindowPanesFn: deps.listCurrentWindowPanesFn ?? (paneId => listCurrentWindowPanes(undefined, paneId)),
     clearTmuxPaneHistoryFn: deps.clearTmuxPaneHistoryFn ?? clearTmuxPaneHistory,
     registerHudResizeHookFn: deps.registerHudResizeHookFn ?? registerHudResizeHook,
     reconcileTmuxHudFn: deps.reconcileTmuxHudFn ?? (async (reconcileCwd) => {
@@ -291,18 +295,25 @@ export async function runWatchMode(
         const config = await dependencies.readHudConfigFn(frameCwd);
         const ctx = await dependencies.readAllStateFn(frameCwd, config);
         const preset = flags.preset ?? config.preset;
-        const maxLines = getHudRenderMaxLines(ctx);
-        const line = dependencies.renderHudFn(ctx, preset, {
-          maxWidth: process.stdout.columns ?? undefined,
-          maxLines,
-        });
         const hudPaneId = dependencies.env.TMUX_PANE?.trim();
         const ownedHudPane = Boolean(
           dependencies.env.TMUX
           && dependencies.env[OMX_TMUX_HUD_OWNER_ENV] === '1'
           && hudPaneId?.startsWith('%'),
         );
-        const changingHeight = maxLines !== lastDesiredHeight;
+        const desiredHeight = getHudRenderMaxLines(ctx);
+        const panes = ownedHudPane ? dependencies.listCurrentWindowPanesFn(hudPaneId) : [];
+        const maxLines = ownedHudPane
+          ? boundHudHeight(desiredHeight, panes,
+            dependencies.env[OMX_TMUX_HUD_LEADER_PANE_ENV], hudPaneId)
+          : Math.min(desiredHeight, process.stdout.rows || desiredHeight);
+        const line = dependencies.renderHudFn(ctx, preset, {
+          maxWidth: process.stdout.columns ?? undefined,
+          maxLines,
+        });
+        const currentHeight = panes.find(pane => pane.paneId === hudPaneId)?.paneHeight;
+        const changingHeight = maxLines !== lastDesiredHeight
+          || (typeof currentHeight === 'number' && currentHeight !== maxLines);
         const clearFrame = ownedHudPane && changingHeight
           ? '\x1b[3J\x1b[2J\x1b[H'
           : '\x1b[2J\x1b[H';
@@ -519,7 +530,7 @@ async function launchTmuxPane(cwd: string, flags: HudFlags): Promise<void> {
     }
     const config = await readHudConfig(cwd);
     const ctx = await readAllState(cwd, config);
-    const desiredHeight = getHudRenderMaxLines(ctx);
+    const desiredHeight = boundHudHeight(getHudRenderMaxLines(ctx), listCurrentWindowPanes(undefined, leaderPaneId), leaderPaneId, keeperPaneId);
     resizeTmuxPane(keeperPaneId, desiredHeight);
     if (leaderPaneId) registerHudResizeHook(keeperPaneId, leaderPaneId, desiredHeight);
     console.log(duplicatePaneIds.length > 0
@@ -537,7 +548,7 @@ async function launchTmuxPane(cwd: string, flags: HudFlags): Promise<void> {
     process.env.OMX_SESSION_ID,
     process.env.OMX_ROOT,
     currentPaneId,
-    getHudRenderMaxLines(ctx),
+    boundHudHeight(getHudRenderMaxLines(ctx), listCurrentWindowPanes(undefined, leaderPaneId), leaderPaneId),
     {
       omxStateRoot: process.env.OMX_STATE_ROOT,
       omxTeamStateRoot: process.env.OMX_TEAM_STATE_ROOT,

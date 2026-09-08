@@ -28,6 +28,33 @@ async function readLockOwner(lockPath: string): Promise<Record<string, unknown>>
 }
 
 describe('reconcileHudForPromptSubmit', () => {
+  it('caps an existing 20-worker HUD in a 24-row window without recreating it', async () => {
+    const resized: number[] = [];
+    const hooks: number[] = [];
+    const result = await reconcileHudForPromptSubmit('/repo', {
+      env: { TMUX: '1', TMUX_PANE: '%1', OMX_SESSION_ID: 'sess-a', [OMX_TMUX_HUD_OWNER_ENV]: '1' },
+      listCurrentWindowPanes: () => [
+        { paneId: '%1', currentCommand: 'codex', startCommand: 'codex', windowHeight: 24, paneHeight: 6 },
+        { paneId: '%2', currentCommand: 'node', paneHeight: 17,
+          startCommand: `env OMX_SESSION_ID='sess-a' ${OMX_TMUX_HUD_LEADER_PANE_ENV}='%1' node omx hud --watch` },
+      ],
+      readHudConfig: async () => ({ preset: 'focused', git: { display: 'branch' }, statusLine: { preset: 'focused' } }),
+      readAllState: async () => ({
+        version: null, gitBranch: null, ralph: null, ultragoal: null, ultrawork: null,
+        autopilot: null, ralplan: null, deepInterview: null, autoresearch: null, ultraqa: null,
+        team: { active: true, workers: Array.from({ length: 20 }, (_, i) => ({ name: `worker-${i + 1}`, state: 'working' as const })) },
+        metrics: null, hudNotify: null, session: null,
+      }),
+      resizeTmuxPane: (_pane, height) => { resized.push(height); return true; },
+      registerHudResizeHook: (_pane, _leader, height) => { hooks.push(height); return true; },
+      createHudWatchPane: () => { assert.fail('must reuse the existing HUD'); },
+      resolveOmxCliEntryPath: () => '/repo/dist/cli/omx.js',
+    });
+    assert.equal(result.desiredHeight, 11);
+    assert.deepEqual(resized, [11]);
+    assert.deepEqual(hooks, [11]);
+  });
+
   it('skips reconciliation outside tmux', async () => {
     const result = await reconcileHudForPromptSubmit('/tmp', {
       env: {},
