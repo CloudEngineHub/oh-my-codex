@@ -211,7 +211,7 @@ function clampHudMaxLines(ctx: HudRenderContext, maxLines: number | undefined): 
   return Math.min(Math.floor(maxLines ?? adaptiveMaxLines), adaptiveMaxLines);
 }
 
-function renderTeamWorkers(workers: TeamWorkerForHud[]): string[] {
+function renderTeamWorkers(workers: TeamWorkerForHud[], maxWidth: number): string[] {
   const cells = workers.map(worker => {
     let updated = '';
     if (worker.updatedAt && Number.isFinite(Date.parse(worker.updatedAt))) {
@@ -228,16 +228,39 @@ function renderTeamWorkers(workers: TeamWorkerForHud[]): string[] {
   });
   const columns = [0, 1, 2, 3, 4, 5].filter(column => column < 2 || cells.some(row => row[column]));
   const widths = columns.map(column => Math.max(...cells.map(row => visibleLength(row[column] || '-'))));
+  let separator = SEP;
+  const rowWidth = () => widths.reduce((sum, width) => sum + width, 1) + Math.max(0, columns.length - 2) * visibleLength(separator);
+  // Remove optional columns as a unit so the remaining roster stays aligned.
+  while (rowWidth() > maxWidth && (columns.at(-1) ?? 0) >= 3) {
+    columns.pop();
+    widths.pop();
+  }
+  if (rowWidth() > maxWidth) {
+    const hasTask = columns[2] === 2;
+    let nameBudget = maxWidth - widths[1] - 1 - (hasTask ? widths[2] + 3 : 0);
+    if (nameBudget < 3) {
+      separator = ' ';
+      if (hasTask) {
+        for (const row of cells) row[2] = row[2].replace(/^task:/, '#');
+        widths[2] = Math.max(...cells.map(row => visibleLength(row[2] || '-')));
+      }
+      nameBudget = maxWidth - widths[1] - 1 - (hasTask ? widths[2] + 1 : 0);
+    }
+    widths[0] = Math.min(widths[0], Math.max(1, nameBudget));
+    if (hasTask) widths[2] = Math.min(widths[2], Math.max(1, maxWidth - widths[0] - widths[1] - 1 - visibleLength(separator)));
+  }
   return cells.map((row, index) => {
     const padded = columns.map((column, position) => {
-      const value = row[column] || '-';
+      let value = row[column] || '-';
+      if (column === 0 && visibleLength(value) > widths[position]) value = value.replace(/^worker-(\d+)$/, 'w$1');
+      value = ellipsizeSegment(value, widths[position]);
       return position === columns.length - 1 ? value : value + ' '.repeat(widths[position] - visibleLength(value));
     });
     const label = `${padded[0]} ${padded[1]}`;
     const state = workers[index].state;
     const status = state === 'working' || state === 'done' ? green(label)
       : state === 'blocked' || state === 'failed' ? yellow(label) : dim(label);
-    return [status, ...padded.slice(2).map((value, position) => columns[position + 2] === 5 ? dim(value) : value)].join(SEP);
+    return [status, ...padded.slice(2).map((value, position) => columns[position + 2] === 5 ? dim(value) : value)].join(separator);
   });
 }
 
@@ -559,10 +582,10 @@ export function renderHud(
   const availableRows = renderOptions.maxLines - countRenderedHudLines(header);
   const overflow = workers.length > availableRows;
   const visibleWorkers = workers.slice(0, Math.max(0, availableRows - (overflow ? 1 : 0)));
-  const rows = renderTeamWorkers(workers).slice(0, visibleWorkers.length);
-  if (overflow && availableRows > 0) rows.push(dim(`+${workers.length - visibleWorkers.length} workers`));
   const width = Number.isFinite(options.maxWidth) && (options.maxWidth ?? 0) > 0
     ? Math.max(12, Math.floor(options.maxWidth ?? 0)) : Infinity;
+  const rows = renderTeamWorkers(workers, width).slice(0, visibleWorkers.length);
+  if (overflow && availableRows > 0) rows.push(dim(`+${workers.length - visibleWorkers.length} workers`));
   // Keep identity, status, and task ahead of optional metadata on narrow panes.
   return [header, ...rows.map(row => visibleLength(row) > width ? `${sliceAnsiVisible(row, 0, width - 1)}…` : row)].join('\n');
 }

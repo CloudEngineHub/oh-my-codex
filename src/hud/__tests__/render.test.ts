@@ -415,6 +415,24 @@ describe('renderHud – team', () => {
     assert.ok(result.split('\n').every(line => line.length <= 48));
   });
 
+  it('budgets identity, full status, and task before optional columns at 16 and 24 columns', () => {
+    const workers = [
+      { name: 'worker-20', state: 'blocked' as const, taskId: '42', role: 'executor', paneId: '%123' },
+      { name: 'very-long-worker-name', state: 'draining' as const, taskId: '17', role: 'long-specialist-role' },
+      { name: 'worker-1', state: 'idle' as const },
+    ];
+    for (const maxWidth of [16, 24]) {
+      const rows = stripSgr(renderHud({ ...emptyCtx(), team: { active: true, workers } }, 'focused', { maxWidth })).split('\n').slice(1);
+      assert.equal(rows.length, 3);
+      assert.match(rows[0], /blocked.*(?:task:|#)42/);
+      assert.match(rows[1], /draining.*(?:task:|#)17/);
+      assert.match(rows[2], /idle/);
+      assert.ok(rows.every(row => row.length <= maxWidth));
+      assert.ok(rows.every(row => !row.includes('executor') && !row.includes('pane:')));
+      assert.equal(rows[0].indexOf('blocked'), rows[1].indexOf('draining'));
+    }
+  });
+
   it('keeps the team name alongside the worker count in every preset', () => {
     const ctx = {
       ...emptyCtx(),
