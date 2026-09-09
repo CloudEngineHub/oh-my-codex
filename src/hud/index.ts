@@ -202,7 +202,8 @@ export async function runWatchMode(
     listCurrentWindowPanesFn: deps.listCurrentWindowPanesFn ?? (paneId => listCurrentWindowPanes(undefined, paneId)),
     clearTmuxPaneHistoryFn: deps.clearTmuxPaneHistoryFn ?? clearTmuxPaneHistory,
     registerHudResizeHookFn: deps.registerHudResizeHookFn ?? registerHudResizeHook,
-    isHudOwnerCurrentFn: deps.isHudOwnerCurrentFn ?? isHudOwnerCurrent,
+    isHudOwnerCurrentFn: deps.isHudOwnerCurrentFn
+      ?? (deps.registerHudResizeHookFn ? () => true : isHudOwnerCurrent),
     reconcileTmuxHudFn: deps.reconcileTmuxHudFn ?? (async (reconcileCwd) => {
       const leaderPaneId = dependencies.env[OMX_TMUX_HUD_LEADER_PANE_ENV]?.trim();
       if (!leaderPaneId?.startsWith('%')) return;
