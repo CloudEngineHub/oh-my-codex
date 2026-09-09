@@ -957,10 +957,11 @@ function buildAtomicHudHookCommand(
   ].join(' ');
   const args = [
     'if-shell', '-F', '-t', context.leaderPaneId,
-    buildHudHookIncarnationCondition(context.leaderPaneId, context.leaderPanePid),
-    context.ownerId
-      ? `if-shell -F -t ${context.sessionId} '#{==:#{@omx_instance_id},${context.ownerId}}' ${hudConditional} ''`
-      : hudConditional,
+    [
+      buildHudHookIncarnationCondition(context.leaderPaneId, context.leaderPanePid),
+      ...(context.ownerId ? [`#{==:#{@omx_instance_id},${context.ownerId}}`] : []),
+    ].reduce((combined, condition) => `#{&&:${combined},${condition}}`),
+    hudConditional,
     unregister,
   ];
   if (process.platform === 'win32') {
