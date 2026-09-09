@@ -1792,7 +1792,6 @@ export function registerHudResizeHook(
       'display-message', '-p', '-t', canonicalLeaderPaneId, '#{@omx_instance_id}',
     ]));
     if (observedOwner && /^\S+$/.test(observedOwner)) {
-      if (expectedOwnerId && observedOwner !== expectedOwnerId) return false;
       ownerId = observedOwner;
     }
   } catch {
@@ -1839,9 +1838,10 @@ export function isHudOwnerCurrent(
   const ownerId = expectedOwnerId.trim();
   if (!paneId || !ownerId) return false;
   try {
-    return parseExactTmuxAuthorityScalar(execTmuxSync([
+    const observedOwner = parseExactTmuxAuthorityScalar(execTmuxSync([
       'display-message', '-p', '-t', paneId, '#{@omx_instance_id}',
-    ])) === ownerId;
+    ]));
+    return !observedOwner || observedOwner === ownerId;
   } catch {
     return false;
   }
