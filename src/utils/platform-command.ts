@@ -163,13 +163,17 @@ function resolvePosixCommandPath(
 
   // Empty PATH components resolve to the current directory under execvp
   // semantics, so discovery must consider them to stay consistent with how a
-  // later bare-binary spawn actually resolves the command.
-  const pathEntries = String(env.PATH ?? env.Path ?? '')
-    .split(delimiter)
-    .map((value) => value.trim());
+  // later bare-binary spawn actually resolves the command. Components are
+  // used verbatim: POSIX PATH components are colon-delimited pathnames, so
+  // whitespace is data and must not be trimmed into an empty component. An
+  // absent PATH falls back to Node's Unix default /usr/bin:/bin, while an
+  // explicitly empty PATH probes only the current directory.
+  const rawPath = env.PATH ?? env.Path;
+  const pathValue = rawPath === undefined ? '/usr/bin:/bin' : String(rawPath);
+  const pathEntries = pathValue.split(delimiter).map((entry) => (entry === '' ? '.' : entry));
 
   for (const entry of pathEntries) {
-    const candidate = resolve(entry === '' ? '.' : entry, trimmed);
+    const candidate = resolve(entry, trimmed);
     if (existsImpl(candidate)) return candidate;
   }
 
