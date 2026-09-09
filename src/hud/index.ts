@@ -28,6 +28,7 @@ import {
   OMX_TMUX_HUD_LEADER_PANE_ENV,
   readActiveTmuxPaneId,
   registerHudResizeHook,
+  isHudOwnerCurrent,
   clearTmuxPaneHistory,
   resizeTmuxPane,
   shellEscapeSingle,
@@ -86,6 +87,7 @@ interface RunWatchModeDependencies {
   listCurrentWindowPanesFn: (paneId?: string) => ReturnType<typeof listCurrentWindowPanes>;
   clearTmuxPaneHistoryFn: (paneId: string) => boolean;
   registerHudResizeHookFn: (hudPaneId: string, leaderPaneId: string | undefined, heightLines: number) => boolean;
+  isHudOwnerCurrentFn: (leaderPaneId: string, ownerId: string) => boolean;
   reconcileTmuxHudFn: (cwd: string) => Promise<void>;
   writeStdout: (text: string) => void;
   writeStderr: (text: string) => void;
@@ -158,15 +160,22 @@ export function resolveHudWatchCwd(
 
 function reconcileRunningHudPaneHeight(
   desiredHeight: number,
-  dependencies: Pick<RunWatchModeDependencies, 'env' | 'resizeTmuxPaneFn' | 'registerHudResizeHookFn'>,
+  dependencies: Pick<RunWatchModeDependencies, 'env' | 'resizeTmuxPaneFn' | 'registerHudResizeHookFn' | 'isHudOwnerCurrentFn'>,
 ): void {
   if (!dependencies.env.TMUX || dependencies.env[OMX_TMUX_HUD_OWNER_ENV] !== '1') return;
   const hudPaneId = dependencies.env.TMUX_PANE?.trim();
   if (!hudPaneId?.startsWith('%')) return;
   const leaderPaneId = dependencies.env[OMX_TMUX_HUD_LEADER_PANE_ENV]?.trim() || undefined;
-  if (dependencies.resizeTmuxPaneFn(hudPaneId, desiredHeight) && leaderPaneId) {
-    dependencies.registerHudResizeHookFn(hudPaneId, leaderPaneId, desiredHeight);
+  if (!leaderPaneId) return;
+  if (!dependencies.env.OMX_SESSION_ID) {
+    if (dependencies.resizeTmuxPaneFn(hudPaneId, desiredHeight)) {
+      dependencies.registerHudResizeHookFn(hudPaneId, leaderPaneId, desiredHeight);
+    }
+    return;
   }
+  if (!dependencies.isHudOwnerCurrentFn(leaderPaneId, dependencies.env.OMX_SESSION_ID)) return;
+  dependencies.resizeTmuxPaneFn(hudPaneId, desiredHeight);
+  dependencies.registerHudResizeHookFn(hudPaneId, leaderPaneId, desiredHeight);
 }
 
 /**
@@ -193,6 +202,7 @@ export async function runWatchMode(
     listCurrentWindowPanesFn: deps.listCurrentWindowPanesFn ?? (paneId => listCurrentWindowPanes(undefined, paneId)),
     clearTmuxPaneHistoryFn: deps.clearTmuxPaneHistoryFn ?? clearTmuxPaneHistory,
     registerHudResizeHookFn: deps.registerHudResizeHookFn ?? registerHudResizeHook,
+    isHudOwnerCurrentFn: deps.isHudOwnerCurrentFn ?? isHudOwnerCurrent,
     reconcileTmuxHudFn: deps.reconcileTmuxHudFn ?? (async (reconcileCwd) => {
       const leaderPaneId = dependencies.env[OMX_TMUX_HUD_LEADER_PANE_ENV]?.trim();
       if (!leaderPaneId?.startsWith('%')) return;
