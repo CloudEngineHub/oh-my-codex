@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { lstat, mkdir, open, readdir, rename, stat, type FileHandle, unlink, writeFile } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
   formatProcessOwnerToken,
@@ -71,7 +71,7 @@ async function readPinnedRecord(name: string, token: string): Promise<PinnedReco
   } finally { await handle?.close(); }
 }
 
-async function readPinnedOwner(): Promise<OwnerState> {
+async function readPinnedOwner(expectedCurrentToken?: string): Promise<OwnerState> {
   const entries = await readdir('.');
   if (entries.length === 0) return { kind: 'ownerless' };
   const ownerNames = entries.filter((entry) => entry.startsWith('owner-'));
@@ -79,7 +79,14 @@ async function readPinnedOwner(): Promise<OwnerState> {
   const candidateNames = entries.filter((entry) => entry.startsWith('.owner-publish-'));
   const bootstrapName = `owner-${BOOTSTRAP_OWNER_TOKEN}`;
   if (ownerNames.length === 2 && ownerNames.includes(bootstrapName)
-    && displacedNames.length === 0 && candidateNames.length === 0) return { kind: 'unstable' };
+    && entries.length === 2 && displacedNames.length === 0 && candidateNames.length === 0) {
+    if (expectedCurrentToken && ownerNames.includes(`owner-${expectedCurrentToken}`)) {
+      const current = await readPinnedRecord(`owner-${expectedCurrentToken}`, expectedCurrentToken);
+      const bootstrap = await readPinnedRecord(bootstrapName, BOOTSTRAP_OWNER_TOKEN);
+      if (current.kind === 'valid' && bootstrap.kind === 'valid') return { kind: 'valid', owner: current.owner };
+    }
+    return { kind: 'unstable' };
+  }
   if (ownerNames.length > 1 || displacedNames.length > 1 || candidateNames.length > 1
     || ownerNames.length + displacedNames.length + candidateNames.length !== entries.length) return { kind: 'ambiguous', reason: `entries:${entries.join(',')}` };
   const owner = ownerNames[0]
@@ -205,6 +212,50 @@ async function restoreDisplacedOwner(displaced: OwnerRecord): Promise<boolean> {
   }
 }
 
+async function waitForObservedBootstrapCleanupBarrier(): Promise<void> {
+  const barrierDir = process.env.OMX_TEST_MODE_BINDING_BOOTSTRAP_CLEANUP_BARRIER_DIR;
+  if (!barrierDir) return;
+  const arrival = join(barrierDir, `arrival-${process.pid}`);
+  try { await writeFile(arrival, 'ready', { flag: 'wx', mode: 0o600 }); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  }
+  const release = join(barrierDir, 'release');
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    try { await stat(release); return; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if (Date.now() >= deadline) throw new Error('timed out waiting for bootstrap cleanup test barrier');
+      await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 5));
+    }
+  }
+}
+
+async function noteObservedBootstrapCleanupEnoent(): Promise<void> {
+  const barrierDir = process.env.OMX_TEST_MODE_BINDING_BOOTSTRAP_CLEANUP_BARRIER_DIR;
+  if (!barrierDir) return;
+  try {
+    await writeFile(join(barrierDir, `enoent-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`), 'ENOENT', { flag: 'wx', mode: 0o600 });
+  } catch {
+    // Test-only evidence must not change the cleanup result.
+  }
+}
+
+async function removeObservedBootstrap(observed: OwnerRecord): Promise<boolean> {
+  const expectedName = `owner-${BOOTSTRAP_OWNER_TOKEN}`;
+  if (observed.name !== expectedName || observed.token !== BOOTSTRAP_OWNER_TOKEN) {
+    throw new Error('canonical state lock bootstrap cleanup received an unexpected owner');
+  }
+  await waitForObservedBootstrapCleanupBarrier();
+  try { await unlink(expectedName); return true; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    await noteObservedBootstrapCleanupEnoent();
+    return false;
+  }
+}
+
 async function maybeCrashReclaimPhase(phase: string): Promise<void> {
   if (process.env.OMX_TEST_MODE_BINDING_RECLAIM_CRASH_PHASE !== phase) return;
   const sentinel = process.env.OMX_TEST_MODE_BINDING_RECLAIM_CRASH_SENTINEL;
@@ -271,7 +322,8 @@ async function runPinnedClaimMode(args: string[]): Promise<void> {
       const confirmed = await readPinnedRecord(bootstrapName, BOOTSTRAP_OWNER_TOKEN);
       if (confirmed.kind === 'valid' && sameOwner(bootstrap.owner, confirmed.owner)
         && confirmedEntries.includes(bootstrapName) && confirmedEntries.length > 1) {
-        await unlink(bootstrapName);
+        const removed = await removeObservedBootstrap(bootstrap.owner);
+        if (!removed) { respond({ claimed: false }); return; }
         respond({ claimed: false }); return;
       }
     }
@@ -355,7 +407,10 @@ async function runPinnedClaimMode(args: string[]): Promise<void> {
       const visible = await readdir('.');
       if (bootstrap.kind === 'valid' && (visible.length !== 1 || visible[0] !== bootstrapName)) {
         const current = await readPinnedRecord(bootstrapName, BOOTSTRAP_OWNER_TOKEN);
-        if (current.kind === 'valid' && sameOwner(current.owner, bootstrap.owner)) await unlink(bootstrapName);
+        if (current.kind === 'valid' && sameOwner(current.owner, bootstrap.owner)) {
+          const removed = await removeObservedBootstrap(bootstrap.owner);
+          if (!removed) { respond({ claimed: false }); return; }
+        }
         respond({ claimed: false }); return;
       }
     } catch (error) {
@@ -423,10 +478,10 @@ async function assertPinnedLock(): Promise<void> {
   await assertPinnedNamespace();
   const pinned = await stat('.');
   let visible: Awaited<ReturnType<typeof lstat>>;
-  try { visible = await lstat(`../${lockName}`); } catch { throw new Error('canonical state lock ownership lost'); }
+  try { visible = await lstat(`../${lockName}`); } catch { throw new Error('canonical state lock ownership lost: pinned path missing'); }
   if (!pinned.isDirectory() || !visible.isDirectory() || visible.isSymbolicLink()
     || !sameIdentity(pinned, lockIdentity) || !sameIdentity(visible, lockIdentity)) {
-    throw new Error('canonical state lock ownership lost');
+    throw new Error('canonical state lock ownership lost: pinned identity changed');
   }
 }
 
@@ -485,8 +540,8 @@ async function acquire(): Promise<void> {
             throw new Error('canonical state lock changed after stale claim');
           }
           await enterPinnedLock(identity);
-          const claimed = await readPinnedOwner();
-          if (claimed.kind !== 'valid' || claimed.owner.token !== token) throw new Error('canonical state lock ownership lost');
+          const claimed = await readPinnedOwner(token);
+          if (claimed.kind !== 'valid' || claimed.owner.token !== token) throw new Error(`canonical state lock ownership lost: post-claim observed ${claimed.kind}`);
           return;
         }
       } else if (visible) {
@@ -505,8 +560,8 @@ async function acquire(): Promise<void> {
 
 async function release(): Promise<void> {
   await assertPinnedLock();
-  const observed = await readPinnedOwner();
-  if (observed.kind !== 'valid' || observed.owner.token !== token) throw new Error('canonical state lock ownership lost');
+  const observed = await readPinnedOwner(token);
+  if (observed.kind !== 'valid' || observed.owner.token !== token) throw new Error(`canonical state lock ownership lost: release observed ${observed.kind}`);
   await unlink(`owner-${token}`);
   // The persistent directory remains pinned; a successor converges through
   // the fixed bootstrap owner without depending on this process's liveness.
@@ -530,8 +585,8 @@ for await (const line of acquired ? lines : []) {
     id = request.id;
     if (request.op === 'assert') {
       await assertPinnedLock();
-      const observed = await readPinnedOwner();
-      if (observed.kind !== 'valid' || observed.owner.token !== token) throw new Error('canonical state lock ownership lost');
+      const observed = await readPinnedOwner(token);
+      if (observed.kind !== 'valid' || observed.owner.token !== token) throw new Error(`canonical state lock ownership lost: assert observed ${observed.kind}`);
       respond({ id, ok: true });
     } else if (request.op === 'close') {
       await release(); respond({ id, ok: true }); break;

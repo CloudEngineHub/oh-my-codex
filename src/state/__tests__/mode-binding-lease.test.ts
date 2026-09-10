@@ -18,6 +18,17 @@ import {
 } from '../process-identity.js';
 
 const roots: string[] = [];
+const BOOTSTRAP_OWNER_TOKEN = `99999999-1-${'0'.repeat(24)}`;
+
+async function waitForBootstrapCleanupBarrier(barrierDir: string, count: number): Promise<string[]> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const entries = (await readdir(barrierDir)).filter((entry) => entry.startsWith('arrival-'));
+    if (entries.length >= count) return entries;
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${count} bootstrap cleanup contenders`);
+    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 5));
+  }
+}
 const operationsModuleUrl = new URL('../operations.js', import.meta.url).href;
 
 async function runTransactionProcess(path: string): Promise<void> {
@@ -38,6 +49,7 @@ async function runTransactionProcess(path: string): Promise<void> {
 }
 
 afterEach(async () => {
+  delete process.env.OMX_TEST_MODE_BINDING_BOOTSTRAP_CLEANUP_BARRIER_DIR;
   __setStateOperationTestHooksForTests({});
   __setCanonicalModeBindingLeaseTestHooksForTests({});
   delete process.env.OMX_TEST_MODE_BINDING_RECLAIM_CRASH_PHASE;
@@ -96,6 +108,25 @@ describe('canonical mode binding lease', () => {
     assert.equal(ran, true);
     assert.deepEqual(await readdir(lockPath), []);
   });
+
+  for (const kind of ['malformed', 'partial', 'symlink', 'foreign-entry'] as const) {
+    it(`rejects ${kind} bootstrap state beside its own valid owner`, async () => {
+      const cwd = await mkdtemp(join(tmpdir(), `omx-mode-bootstrap-${kind}-`));
+      roots.push(cwd);
+      const path = join(cwd, '.omx', 'state', 'sessions', 'session-a', 'ralplan-state.json');
+      const lockPath = (await resolveValidatedCanonicalModeBinding(path)).leasePath;
+      const bootstrapPath = join(lockPath, `owner-${BOOTSTRAP_OWNER_TOKEN}`);
+      const external = join(cwd, 'external-bootstrap');
+      await writeFile(external, BOOTSTRAP_OWNER_TOKEN);
+      await assert.rejects(withStateFileWriteTransaction(path, async () => {
+        if (kind === 'symlink') await symlink(external, bootstrapPath);
+        else await writeFile(bootstrapPath, kind === 'malformed' ? 'tampered' : kind === 'partial' ? BOOTSTRAP_OWNER_TOKEN.slice(0, 8) : BOOTSTRAP_OWNER_TOKEN);
+        if (kind === 'foreign-entry') await writeFile(join(lockPath, 'foreign'), 'preserve');
+      }), kind === 'symlink' ? /ELOOP|lock ownership lost|ambiguous/ : /lock ownership lost|ambiguous/);
+      assert.equal(await readFile(external, 'utf8'), BOOTSTRAP_OWNER_TOKEN);
+      assert.equal((await readdir(lockPath)).filter((entry) => entry.startsWith('owner-')).length, 2);
+    });
+  }
 
   it('parses legacy owners and emits v3 owners bound to process start identity', async () => {
     const legacy = `${process.pid}-${Date.now()}-${'1'.repeat(24)}`;
@@ -391,6 +422,29 @@ describe('canonical mode binding lease', () => {
         assert.deepEqual(await readdir(lockPath), []);
       }
     }
+  });
+
+  it('deterministically converges two bootstrap cleanup contenders after one observes ENOENT', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-mode-lease-bootstrap-race-'));
+    roots.push(cwd);
+    const path = join(cwd, '.omx', 'state', 'sessions', 'session-a', 'ralplan-state.json');
+    await withStateFileWriteTransaction(path, async () => undefined);
+    const lockPath = (await resolveValidatedCanonicalModeBinding(path)).leasePath;
+    const displacedToken = `99999999-${Date.now() - 10_000}-${'d'.repeat(24)}`;
+    await writeFile(join(lockPath, `owner-${BOOTSTRAP_OWNER_TOKEN}`), BOOTSTRAP_OWNER_TOKEN);
+    await writeFile(join(lockPath, `.owner-reclaim-${displacedToken}`), displacedToken);
+    const barrierDir = join(cwd, 'bootstrap-cleanup-barrier');
+    await mkdir(barrierDir);
+    process.env.OMX_TEST_MODE_BINDING_BOOTSTRAP_CLEANUP_BARRIER_DIR = barrierDir;
+
+    const contenders = [runTransactionProcess(path), runTransactionProcess(path)];
+    await waitForBootstrapCleanupBarrier(barrierDir, 2);
+    await writeFile(join(barrierDir, 'release'), 'go');
+    await Promise.all(contenders);
+
+    const evidence = (await readdir(barrierDir)).filter((entry) => entry.startsWith('enoent-'));
+    assert.ok(evidence.length >= 1, 'expected one contender to observe bootstrap unlink ENOENT');
+    assert.deepEqual(await readdir(lockPath), []);
   });
 
   it('recovers quarantine plus an aged dead partial successor', async () => {

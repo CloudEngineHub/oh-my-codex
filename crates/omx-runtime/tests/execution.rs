@@ -439,6 +439,7 @@ fn concurrent_exec_queue_accepts_exactly_one_request_id() {
 // ---------------------------------------------------------------------------
 
 /// Helper: run `fs-rename-no-replace <from> <to>` and return (exit_ok, stdout, stderr).
+#[cfg(target_os = "linux")]
 fn run_rename_no_replace(from: &str, to: &str) -> (bool, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_omx-runtime"))
         .args(["fs-rename-no-replace", from, to])

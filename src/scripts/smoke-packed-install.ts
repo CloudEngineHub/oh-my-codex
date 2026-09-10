@@ -291,6 +291,12 @@ const CODEX_TRUST_STATUSES = new Set([
   'modified',
 ]);
 
+const CODEX_HOOK_SOURCES = new Set([
+  'system', 'user', 'project', 'mdm', 'sessionFlags', 'plugin',
+  'cloudRequirements', 'cloudManagedConfig', 'legacyManagedConfigFile',
+  'legacyManagedConfigMdm', 'unknown',
+]);
+
 const CODEX_EVENT_LABELS: Readonly<Record<string, string>> = {
   preToolUse: 'PreToolUse',
   permissionRequest: 'PermissionRequest',
@@ -298,13 +304,16 @@ const CODEX_EVENT_LABELS: Readonly<Record<string, string>> = {
   preCompact: 'PreCompact',
   postCompact: 'PostCompact',
   sessionStart: 'SessionStart',
+  sessionEnd: 'SessionEnd',
   userPromptSubmit: 'UserPromptSubmit',
   subagentStart: 'SubagentStart',
   subagentStop: 'SubagentStop',
   stop: 'Stop',
+  interrupt: 'Interrupt',
 };
 
-const PINNED_CODEX_VERSION = '0.142.5';
+const PINNED_CODEX_VERSION = '0.153.4';
+
 const PINNED_CODEX_VERSION_OUTPUT = `codex-cli ${PINNED_CODEX_VERSION}`;
 
 /** Sanitized Codex 0.144.5 PreToolUse shape: documented fields only, with no pointer or tracker state. */
@@ -967,11 +976,28 @@ export function parseCodexHooksListResult(
   const hooks = entry.hooks.map((value, index) => {
     const hook = requireRecord(value, `hooks/list hook ${index}`);
     const rawEvent = requireString(hook.eventName, `hooks[${index}].eventName`);
-    const event = CODEX_EVENT_LABELS[rawEvent] ?? rawEvent;
+    if (!Object.hasOwn(CODEX_EVENT_LABELS, rawEvent)) {
+      throw new Error(`Codex hooks/list response has unsupported eventName ${rawEvent}`);
+    }
+    const event = CODEX_EVENT_LABELS[rawEvent];
+    const handlerType = requireString(hook.handlerType, `hooks[${index}].handlerType`);
+    if (handlerType !== 'command') {
+      throw new Error(`Codex hooks/list hook ${index} is not a command handler`);
+    }
     const command = requireString(hook.command, `hooks[${index}].command`);
-    const enabled = hook.enabled === undefined ? true : hook.enabled;
-    if (enabled !== true) {
+    const enabled = hook.enabled;
+    if (typeof enabled !== 'boolean' || enabled !== true) {
       throw new Error(`Codex hooks/list hook ${index} is not an enabled command handler`);
+    }
+    if (typeof hook.isManaged !== 'boolean') {
+      throw new Error(`Codex hooks/list response has invalid hooks[${index}].isManaged`);
+    }
+    const source = requireString(hook.source, `hooks[${index}].source`);
+    if (!CODEX_HOOK_SOURCES.has(source)) {
+      throw new Error(`Codex hooks/list response has unsupported source ${source}`);
+    }
+    if (typeof hook.timeoutSec !== 'number' || !Number.isSafeInteger(hook.timeoutSec) || hook.timeoutSec < 0) {
+      throw new Error(`Codex hooks/list response has invalid hooks[${index}].timeoutSec`);
     }
     const sourcePath = requireString(hook.sourcePath, `hooks[${index}].sourcePath`);
     const key = requireString(hook.key, `hooks[${index}].key`);
@@ -984,7 +1010,6 @@ export function parseCodexHooksListResult(
     if (!CODEX_TRUST_STATUSES.has(trustStatus)) {
       throw new Error(`Codex hooks/list response has unsupported trustStatus ${trustStatus}`);
     }
-
 
     if (sourcePath !== hooksPath) {
       throw new Error(`Codex hooks/list sourcePath mismatch: expected ${hooksPath}, got ${sourcePath}`);
@@ -4988,7 +5013,7 @@ export interface PackedHookTrustLifecycleResult {
 export async function smokePackedHookTrustLifecycle(
   omxPath: string,
 ): Promise<PackedHookTrustLifecycleResult> {
-  const lifecycleRoot = mkdtempSync(join(tmpdir(), 'omx-packed-hook-trust-'));
+  const lifecycleRoot = realpathSync(mkdtempSync(join(tmpdir(), 'omx-packed-hook-trust-')));
   const projectDir = resolve(lifecycleRoot, 'project');
   const home = join(lifecycleRoot, 'home');
   const codexHome = join(lifecycleRoot, 'codex-home');
@@ -5409,10 +5434,16 @@ function smokeInstalledPluginHookLauncher(packageRoot: string, omxPath: string):
       if (String(result.stdout ?? '') !== expectedStdout) {
         throw new Error(`installed plugin hook ${name} stdout changed: expected ${JSON.stringify(expectedStdout)}, received ${JSON.stringify(String(result.stdout ?? ''))}`);
       }
-      assert.deepStrictEqual(readPackedPluginHookDelegateCalls(capturePath), [{
+      const calls = readPackedPluginHookDelegateCalls(capturePath);
+      assert.equal(calls.length, 1, `installed plugin hook ${name} must invoke exactly one delegate`);
+      assertPackedLaunchCwdPreserved(
+        hookCwd,
+        calls[0].cwd,
+        `installed plugin hook ${name} must preserve delegate cwd`,
+      );
+      assert.deepStrictEqual(calls.map(({ argv, stdin }) => ({ argv, stdin })), [{
         argv: ['codex-native-hook'],
         stdin,
-        cwd: hookCwd,
       }], `installed plugin hook ${name} must forward exact delegate argv and stdin`);
     };
 
@@ -5493,10 +5524,16 @@ function smokeInstalledPluginHookLauncher(packageRoot: string, omxPath: string):
       /codex-native-hook exited with code 23/,
       'installed plugin hook Stop delegate failure',
     );
-    assert.deepStrictEqual(readPackedPluginHookDelegateCalls(capturePath), [{
+    const failedStopCalls = readPackedPluginHookDelegateCalls(capturePath);
+    assert.equal(failedStopCalls.length, 1, 'installed plugin hook Stop failure must invoke exactly one delegate');
+    assertPackedLaunchCwdPreserved(
+      hookCwd,
+      failedStopCalls[0].cwd,
+      'installed plugin hook Stop failure must preserve delegate cwd',
+    );
+    assert.deepStrictEqual(failedStopCalls.map(({ argv, stdin }) => ({ argv, stdin })), [{
       argv: ['codex-native-hook'],
       stdin: failedStopInput,
-      cwd: hookCwd,
     }], 'installed plugin hook Stop failure must still delegate exact argv and stdin');
   } finally {
     if (originalPinnedLauncher === undefined) {
@@ -5740,7 +5777,7 @@ async function main(): Promise<void> {
     const lifecycle = await smokePackedHookTrustLifecycle(omxPath);
     console.log(
       lifecycle.codexVersion !== null
-        ? `packed install smoke: installed Codex 0.142.5 lifecycle passed (${lifecycle.codexVersion})`
+        ? `packed install smoke: installed Codex 0.153.4 lifecycle passed (${lifecycle.codexVersion})`
         : 'packed install smoke: Codex executable absent; installed-Codex trust leg skipped after deterministic lifecycle',
     );
 
