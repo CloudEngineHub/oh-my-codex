@@ -367,10 +367,11 @@ fn stat_fd(fd: i32, label: &str) -> Result<Identity, String> {
 }
 
 #[cfg(unix)]
+#[allow(clippy::unnecessary_cast)]
 fn identity_from_stat(st: &libc::stat) -> Identity {
     Identity {
         dev: st.st_dev as u64,
-        ino: st.st_ino,
+        ino: st.st_ino as u64,
         nlink: st.st_nlink as u64,
         is_dir: (st.st_mode & libc::S_IFMT) == libc::S_IFDIR,
         is_regular: (st.st_mode & libc::S_IFMT) == libc::S_IFREG,
