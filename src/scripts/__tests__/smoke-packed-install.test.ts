@@ -507,6 +507,15 @@ test('packed lifecycle requires enabled command handlers and integer hook metada
     valid.data[0]!.hooks[0]!.timeoutSec = Number.MAX_SAFE_INTEGER;
     assert.doesNotThrow(() => parseCodexHooksListResult(valid, project, hooksPath));
   }
+  for (const source of [
+    'system', 'user', 'project', 'mdm', 'sessionFlags', 'plugin',
+    'cloudRequirements', 'cloudManagedConfig', 'legacyManagedConfigFile',
+    'legacyManagedConfigMdm', 'unknown',
+  ]) {
+    const valid = structuredClone(response);
+    valid.data[0]!.hooks[0]!.source = source;
+    assert.doesNotThrow(() => parseCodexHooksListResult(valid, project, hooksPath), `${source} is a valid hook source`);
+  }
 });
 
 

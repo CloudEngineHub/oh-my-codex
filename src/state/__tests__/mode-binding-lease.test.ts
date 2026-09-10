@@ -18,6 +18,17 @@ import {
 } from '../process-identity.js';
 
 const roots: string[] = [];
+const BOOTSTRAP_OWNER_TOKEN = `99999999-1-${'0'.repeat(24)}`;
+
+async function waitForBootstrapCleanupBarrier(barrierDir: string, count: number): Promise<string[]> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const entries = (await readdir(barrierDir)).filter((entry) => entry.startsWith('arrival-'));
+    if (entries.length >= count) return entries;
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${count} bootstrap cleanup contenders`);
+    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 5));
+  }
+}
 const operationsModuleUrl = new URL('../operations.js', import.meta.url).href;
 
 async function runTransactionProcess(path: string): Promise<void> {
@@ -37,6 +48,7 @@ async function runTransactionProcess(path: string): Promise<void> {
   assert.deepEqual(result, { code: 0, signal: null }, stderr);
 }
 
+  delete process.env.OMX_TEST_MODE_BINDING_BOOTSTRAP_CLEANUP_BARRIER_DIR;
 afterEach(async () => {
   __setStateOperationTestHooksForTests({});
   __setCanonicalModeBindingLeaseTestHooksForTests({});
@@ -391,6 +403,29 @@ describe('canonical mode binding lease', () => {
         assert.deepEqual(await readdir(lockPath), []);
       }
     }
+  });
+
+  it('deterministically converges two bootstrap cleanup contenders after one observes ENOENT', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-mode-lease-bootstrap-race-'));
+    roots.push(cwd);
+    const path = join(cwd, '.omx', 'state', 'sessions', 'session-a', 'ralplan-state.json');
+    await withStateFileWriteTransaction(path, async () => undefined);
+    const lockPath = (await resolveValidatedCanonicalModeBinding(path)).leasePath;
+    const displacedToken = `99999999-${Date.now() - 10_000}-${'d'.repeat(24)}`;
+    await writeFile(join(lockPath, `owner-${BOOTSTRAP_OWNER_TOKEN}`), BOOTSTRAP_OWNER_TOKEN);
+    await writeFile(join(lockPath, `.owner-reclaim-${displacedToken}`), displacedToken);
+    const barrierDir = join(cwd, 'bootstrap-cleanup-barrier');
+    await mkdir(barrierDir);
+    process.env.OMX_TEST_MODE_BINDING_BOOTSTRAP_CLEANUP_BARRIER_DIR = barrierDir;
+
+    const contenders = [runTransactionProcess(path), runTransactionProcess(path)];
+    await waitForBootstrapCleanupBarrier(barrierDir, 2);
+    await writeFile(join(barrierDir, 'release'), 'go');
+    await Promise.all(contenders);
+
+    const evidence = (await readdir(barrierDir)).filter((entry) => entry.startsWith('enoent-'));
+    assert.ok(evidence.length >= 1, 'expected one contender to observe bootstrap unlink ENOENT');
+    assert.deepEqual(await readdir(lockPath), []);
   });
 
   it('recovers quarantine plus an aged dead partial successor', async () => {
