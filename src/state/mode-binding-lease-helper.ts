@@ -79,10 +79,11 @@ async function readPinnedOwner(expectedCurrentToken?: string): Promise<OwnerStat
   const candidateNames = entries.filter((entry) => entry.startsWith('.owner-publish-'));
   const bootstrapName = `owner-${BOOTSTRAP_OWNER_TOKEN}`;
   if (ownerNames.length === 2 && ownerNames.includes(bootstrapName)
-    && displacedNames.length === 0 && candidateNames.length === 0) {
+    && entries.length === 2 && displacedNames.length === 0 && candidateNames.length === 0) {
     if (expectedCurrentToken && ownerNames.includes(`owner-${expectedCurrentToken}`)) {
       const current = await readPinnedRecord(`owner-${expectedCurrentToken}`, expectedCurrentToken);
-      if (current.kind === 'valid') return { kind: 'valid', owner: current.owner };
+      const bootstrap = await readPinnedRecord(bootstrapName, BOOTSTRAP_OWNER_TOKEN);
+      if (current.kind === 'valid' && bootstrap.kind === 'valid') return { kind: 'valid', owner: current.owner };
     }
     return { kind: 'unstable' };
   }

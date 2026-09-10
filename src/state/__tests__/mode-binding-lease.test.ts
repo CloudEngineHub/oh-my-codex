@@ -48,8 +48,8 @@ async function runTransactionProcess(path: string): Promise<void> {
   assert.deepEqual(result, { code: 0, signal: null }, stderr);
 }
 
-  delete process.env.OMX_TEST_MODE_BINDING_BOOTSTRAP_CLEANUP_BARRIER_DIR;
 afterEach(async () => {
+  delete process.env.OMX_TEST_MODE_BINDING_BOOTSTRAP_CLEANUP_BARRIER_DIR;
   __setStateOperationTestHooksForTests({});
   __setCanonicalModeBindingLeaseTestHooksForTests({});
   delete process.env.OMX_TEST_MODE_BINDING_RECLAIM_CRASH_PHASE;
@@ -108,6 +108,25 @@ describe('canonical mode binding lease', () => {
     assert.equal(ran, true);
     assert.deepEqual(await readdir(lockPath), []);
   });
+
+  for (const kind of ['malformed', 'partial', 'symlink', 'foreign-entry'] as const) {
+    it(`rejects ${kind} bootstrap state beside its own valid owner`, async () => {
+      const cwd = await mkdtemp(join(tmpdir(), `omx-mode-bootstrap-${kind}-`));
+      roots.push(cwd);
+      const path = join(cwd, '.omx', 'state', 'sessions', 'session-a', 'ralplan-state.json');
+      const lockPath = (await resolveValidatedCanonicalModeBinding(path)).leasePath;
+      const bootstrapPath = join(lockPath, `owner-${BOOTSTRAP_OWNER_TOKEN}`);
+      const external = join(cwd, 'external-bootstrap');
+      await writeFile(external, BOOTSTRAP_OWNER_TOKEN);
+      await assert.rejects(withStateFileWriteTransaction(path, async () => {
+        if (kind === 'symlink') await symlink(external, bootstrapPath);
+        else await writeFile(bootstrapPath, kind === 'malformed' ? 'tampered' : kind === 'partial' ? BOOTSTRAP_OWNER_TOKEN.slice(0, 8) : BOOTSTRAP_OWNER_TOKEN);
+        if (kind === 'foreign-entry') await writeFile(join(lockPath, 'foreign'), 'preserve');
+      }), kind === 'symlink' ? /ELOOP|lock ownership lost|ambiguous/ : /lock ownership lost|ambiguous/);
+      assert.equal(await readFile(external, 'utf8'), BOOTSTRAP_OWNER_TOKEN);
+      assert.equal((await readdir(lockPath)).filter((entry) => entry.startsWith('owner-')).length, 2);
+    });
+  }
 
   it('parses legacy owners and emits v3 owners bound to process start identity', async () => {
     const legacy = `${process.pid}-${Date.now()}-${'1'.repeat(24)}`;
