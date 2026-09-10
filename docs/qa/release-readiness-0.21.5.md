@@ -25,8 +25,8 @@
 | Darwin lease verification | 42/42 passed, including malformed/partial/symlink/foreign bootstrap refusal, deterministic ENOENT contender, repeated 20/32/64 stress |
 | Other focused verification | Native-hook full suite, corrected platform fixtures, real tmux hostile receipt, lint, no-unused, generated/native-agent checks passed |
 | Rust gates | Formatting, clippy with warnings denied, workspace tests passed |
-| Clean whole-product local suite | Running separately; no terminal pass claimed yet |
-| Reconciled versioned candidate local gates | Pending |
+| Clean whole-product local suite | Failed: 438 of 439 files passed; lease contention still exposes bootstrap publication ambiguity. Latest authenticated-bootstrap isolated stress also reproduces. Release PR #3651 is draft until repaired. |
+| Reconciled versioned candidate local gates | Build, no-unused, generated/native-agent verification and 6 release-body tests passed; final package verification remains pending |
 | Release collateral PR / exact dev CI | Pending |
 | Protected-main PR review and exact main CI | Pending; one approving review required, no admin bypass |
 | Annotated v0.21.5 tag / native Release workflow | Pending |
