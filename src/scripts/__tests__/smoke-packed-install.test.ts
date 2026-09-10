@@ -422,6 +422,9 @@ test('packed lifecycle parses the pinned hooks/list eventName schema', () => {
         currentHash: 'sha256:current',
         displayOrder: 0,
         enabled: true,
+        isManaged: false,
+        source: 'project',
+        timeoutSec: 0,
         trustStatus: 'trusted',
       }],
       warnings: [],
@@ -448,6 +451,9 @@ test('packed lifecycle requires enabled command handlers and integer hook metada
         currentHash: 'sha256:current',
         displayOrder: 0,
         enabled: true,
+        isManaged: false,
+        source: 'project',
+        timeoutSec: 0,
         trustStatus: 'trusted',
       }],
       warnings: [],
@@ -464,13 +470,42 @@ test('packed lifecycle requires enabled command handlers and integer hook metada
     { enabled: true, displayOrder: -1 },
     { handlerType: 'mcpTool' },
     { handlerType: undefined },
+    { isManaged: 'false' },
+    { source: 'invalid' },
+    { timeoutSec: -1 },
+    { timeoutSec: 0.5 },
+    { timeoutSec: '10' },
+    { timeoutSec: Number.MAX_SAFE_INTEGER + 1 },
+    { eventName: 'toString' },
+    { eventName: 'unknownEvent' },
   ]) {
     const invalid = structuredClone(response);
     Object.assign(invalid.data[0]!.hooks[0]!, update);
     assert.throws(
       () => parseCodexHooksListResult(invalid, project, hooksPath),
-      /enabled command handler|handlerType|not a command handler|invalid hooks\[0\]\.displayOrder/,
+      /enabled command handler|handlerType|not a command handler|invalid hooks\[0\]|unsupported/,
     );
+  }
+  for (const field of Object.keys(response.data[0]!.hooks[0]!)) {
+    const invalid = structuredClone(response);
+    delete (invalid.data[0]!.hooks[0]! as Record<string, unknown>)[field];
+    assert.throws(() => parseCodexHooksListResult(invalid, project, hooksPath), `missing ${field} must fail closed`);
+  }
+  for (const field of ['hooks', 'warnings', 'errors']) {
+    const invalid = structuredClone(response);
+    delete (invalid.data[0]! as Record<string, unknown>)[field];
+    assert.throws(() => parseCodexHooksListResult(invalid, project, hooksPath), `missing ${field} must fail closed`);
+  }
+  for (const eventName of ['sessionEnd', 'interrupt']) {
+    const valid = structuredClone(response);
+    valid.data[0]!.hooks[0]!.eventName = eventName;
+    assert.doesNotThrow(() => parseCodexHooksListResult(valid, project, hooksPath));
+  }
+  for (const isManaged of [true, false]) {
+    const valid = structuredClone(response);
+    valid.data[0]!.hooks[0]!.isManaged = isManaged;
+    valid.data[0]!.hooks[0]!.timeoutSec = Number.MAX_SAFE_INTEGER;
+    assert.doesNotThrow(() => parseCodexHooksListResult(valid, project, hooksPath));
   }
 });
 

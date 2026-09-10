@@ -291,6 +291,12 @@ const CODEX_TRUST_STATUSES = new Set([
   'modified',
 ]);
 
+const CODEX_HOOK_SOURCES = new Set([
+  'system', 'user', 'project', 'mdm', 'sessionFlags', 'plugin',
+  'cloudRequirements', 'cloudManagedConfig', 'legacyManagedConfigFile',
+  'legacyManagedConfigMdm', 'unknown',
+]);
+
 const CODEX_EVENT_LABELS: Readonly<Record<string, string>> = {
   preToolUse: 'PreToolUse',
   permissionRequest: 'PermissionRequest',
@@ -298,10 +304,12 @@ const CODEX_EVENT_LABELS: Readonly<Record<string, string>> = {
   preCompact: 'PreCompact',
   postCompact: 'PostCompact',
   sessionStart: 'SessionStart',
+  sessionEnd: 'SessionEnd',
   userPromptSubmit: 'UserPromptSubmit',
   subagentStart: 'SubagentStart',
   subagentStop: 'SubagentStop',
   stop: 'Stop',
+  interrupt: 'Interrupt',
 };
 
 const PINNED_CODEX_VERSION = '0.153.4';
@@ -968,7 +976,10 @@ export function parseCodexHooksListResult(
   const hooks = entry.hooks.map((value, index) => {
     const hook = requireRecord(value, `hooks/list hook ${index}`);
     const rawEvent = requireString(hook.eventName, `hooks[${index}].eventName`);
-    const event = CODEX_EVENT_LABELS[rawEvent] ?? rawEvent;
+    if (!Object.hasOwn(CODEX_EVENT_LABELS, rawEvent)) {
+      throw new Error(`Codex hooks/list response has unsupported eventName ${rawEvent}`);
+    }
+    const event = CODEX_EVENT_LABELS[rawEvent];
     const handlerType = requireString(hook.handlerType, `hooks[${index}].handlerType`);
     if (handlerType !== 'command') {
       throw new Error(`Codex hooks/list hook ${index} is not a command handler`);
@@ -977,6 +988,16 @@ export function parseCodexHooksListResult(
     const enabled = hook.enabled;
     if (typeof enabled !== 'boolean' || enabled !== true) {
       throw new Error(`Codex hooks/list hook ${index} is not an enabled command handler`);
+    }
+    if (typeof hook.isManaged !== 'boolean') {
+      throw new Error(`Codex hooks/list response has invalid hooks[${index}].isManaged`);
+    }
+    const source = requireString(hook.source, `hooks[${index}].source`);
+    if (!CODEX_HOOK_SOURCES.has(source)) {
+      throw new Error(`Codex hooks/list response has unsupported source ${source}`);
+    }
+    if (typeof hook.timeoutSec !== 'number' || !Number.isSafeInteger(hook.timeoutSec) || hook.timeoutSec < 0) {
+      throw new Error(`Codex hooks/list response has invalid hooks[${index}].timeoutSec`);
     }
     const sourcePath = requireString(hook.sourcePath, `hooks[${index}].sourcePath`);
     const key = requireString(hook.key, `hooks[${index}].key`);
