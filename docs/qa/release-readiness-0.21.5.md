@@ -26,9 +26,9 @@
 | Other focused verification | Native-hook full suite, corrected platform fixtures, real tmux hostile receipt, lint, no-unused, generated/native-agent checks passed |
 | Rust gates | Formatting, clippy with warnings denied, workspace tests passed |
 | Bootstrap-sentinel ABA race (found post-merge) | Fixed via PR #3652 (native `omx-runtime lease-mutex` OS advisory lock serializing the full lease lifecycle); independent full-diff architecture review returned CLEAR/APPROVE with zero findings; PR #3652 exact CI passed in full |
-| Clean whole-product local suite | Rerun in the reconciled release worktree at `e0004b69`+ after the fix; see current run evidence below |
+| Clean whole-product local suite | **Passed**: all 439 test files, 0 failures, clean exit 0, at reconciled commit `859555b1` (`TMPDIR=/private/tmp npm run test:node`). Also passed: `verify:native-agents` (18 agents/32 prompt assets), `verify:plugin-bundle` (24 skill dirs), `verify:capabilities-lock`, `verify:prompt-guidance`, generated-catalog-docs check, prompt-inventory check |
 | Reconciled versioned candidate local gates | Build, lint, no-unused, cargo fmt/clippy/workspace tests, 42/42 lease suite, and full packed-install smoke (real Codex 0.153.4 lifecycle) all passed in the reconciled release worktree |
-| Release collateral PR / exact dev CI | Pending |
+| Release collateral PR / exact dev CI | PR #3651 (draft) open against dev; CI pending on this update |
 | Protected-main PR review and exact main CI | Pending; one approving review required, no admin bypass |
 | Annotated v0.21.5 tag / native Release workflow | Pending |
 | Exact tag/SHA trusted OIDC npm publish | Pending |
