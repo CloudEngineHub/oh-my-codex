@@ -12,7 +12,7 @@
 - Make Team startup checks side-effect free and report actionable failures (#3643).
 - Recover session pointers portably without requiring the native runtime (#3638); resolve hydrated runtime binaries through createRequire (#3639).
 - Respect TOML arrays-of-tables (#3645), and preserve POSIX PATH whitespace and absent-PATH semantics.
-- Repair Darwin lock bootstrap cleanup contention while authenticating both current and bootstrap owner records; preserve malformed/partial/symlink/foreign-state refusal. Keep literal hash/format text intact in guarded tmux receipts (#3650).
+- Fix a real concurrency bug in canonical mode-binding lease acquisition: a removable bootstrap-owner sentinel had an ABA race that could produce an unrecoverable ambiguous multi-owner lock state under concurrent contention. Replaced with a descriptor-bound native OS advisory mutex (`omx-runtime lease-mutex`) that serializes the full observe/claim/publish/release lifecycle of every lease acquisition. Verified via 42/42 focused lease tests (including repeated 20/32/64-process stress) and the full dependent state/modes/ralph/ralplan suite (#3650, #3652).
 - Repair macOS dogfood fixtures using real cross-platform process identities and platform-appropriate directory references; close retained fixture handles explicitly for Node 26. Exact argv/stdin, ownership, trust, and no-follow checks remain enforced (#3650).
 - Refresh dependency lock entries (#3640, #3641, #3642), add the MIT license, and measure maintenance growth without new runtime machinery (#3646).
 
@@ -32,13 +32,14 @@ The packed-install live lifecycle is pinned to Codex 0.153.4. Unsupported instal
 - [#3645](https://github.com/Yeachan-Heo/oh-my-codex/pull/3645): TOML array-of-tables boundaries.
 - [#3646](https://github.com/Yeachan-Heo/oh-my-codex/pull/3646): maintenance inventory.
 - [#3647](https://github.com/Yeachan-Heo/oh-my-codex/pull/3647): retire stale workflow handoffs.
-- [#3650](https://github.com/Yeachan-Heo/oh-my-codex/pull/3650): current Codex/macOS dogfood, ownership race, receipt and fixture corrections.
+- [#3650](https://github.com/Yeachan-Heo/oh-my-codex/pull/3650): current Codex/macOS dogfood, receipt and fixture corrections.
+- [#3652](https://github.com/Yeachan-Heo/oh-my-codex/pull/3652): native OS mutex serialization for canonical mode-binding leases, fixing a real bootstrap-sentinel ABA race found via post-merge concurrency stress testing.
 
 The active-team HUD series and POSIX PATH correction also landed directly in the compare range. Main-only 0.21.4 documentation/history was merged back before freezing this candidate; it is preserved rather than described as a new feature.
 
 ## Validation evidence
 
-Repair head `7aa2b9a93188c7c4310fbc7cfd55a57f4577fe7f` passed [exact CI 34444169245](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/34444169245). Local focused verification passed the real packed-install Codex 0.153.4 lifecycle, 59 smoke regressions, 42 lease tests including deterministic cleanup contention and repeated 20/32/64-process stress, native-hook tests, fixture suites, typecheck/lint/generated checks, and Rust formatting/clippy/workspace tests. Independent source review approved the final authenticated-bootstrap delta.
+Repair head `7aa2b9a93188c7c4310fbc7cfd55a57f4577fe7f` passed [exact CI 34444169245](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/34444169245). A subsequent post-merge stress-test pass uncovered a real bootstrap-sentinel ABA race in the canonical mode-binding lease; the fix (native OS mutex serialization, PR #3652) passed its own full CI run and an independent full-diff architecture review with zero findings. Local focused verification passed the real packed-install Codex 0.153.4 lifecycle, 59 smoke regressions, the complete 42-test lease suite (including repeated 20/32/64-process stress and the new mutex-serialization regression), the full dependent state/modes/ralph/ralplan suite (26 files), native-hook tests, fixture suites, typecheck/lint/generated checks, and Rust formatting/clippy/workspace tests.
 
 Final release-collateral/main CI, native release assets, trusted npm publishing, and final installation evidence are tracked in `docs/qa/release-readiness-0.21.5.md`; they are not claimed complete in this candidate document.
 

@@ -17,8 +17,8 @@ All notable changes to this project are documented in this file.
 - Keep project runtime-home credentials ephemeral and export child-safe CODEX_HOME for Team workers (#3633).
 - Make Team startup preflight side-effect free and actionable (#3643); restore portable session recovery and hydrated native runtime lookup (#3638, #3639).
 - Respect TOML array-of-tables and POSIX PATH edge cases (#3645).
-- Preserve Darwin lease ownership during bootstrap contention while rejecting malformed, partial, symlinked, or foreign bootstrap state; preserve literal tmux receipt hashes and close retained fixture handles (#3650).
-- Correct cross-platform dogfood fixtures without skipping adversarial identity, trust, or no-follow checks (#3650).
+- Fix a real bootstrap-sentinel ABA race in canonical mode-binding lease acquisition, found via post-merge concurrency stress testing; serialize the full lease lifecycle with a new descriptor-bound native OS advisory mutex (#3650, #3652).
+- Correct cross-platform dogfood fixtures without skipping adversarial identity, trust, or no-follow checks; preserve literal tmux receipt hashes and close retained fixture handles (#3650).
 
 ### Maintenance
 

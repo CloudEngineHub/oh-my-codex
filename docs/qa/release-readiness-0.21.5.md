@@ -3,7 +3,7 @@
 ## Frozen candidate
 
 - Previous immutable tag: `v0.21.4` → `304fb3b4825c4132c273732b14d2d5e86b54f8e3`.
-- Product repair head: `7aa2b9a93188c7c4310fbc7cfd55a57f4577fe7f`, merged through PR #3650 as `00d31f78591a7f8c9f808a7bdb72948ec86af114`.
+- Product repair head: `7aa2b9a93188c7c4310fbc7cfd55a57f4577fe7f`, merged through PR #3650 as `00d31f78591a7f8c9f808a7bdb72948ec86af114`. A post-merge stress-test pass found a real bootstrap-sentinel ABA race in the canonical mode-binding lease; the fix (native OS mutex serialization) is PR #3652, merged as `e0004b693292e92209f5c41c5b292d934873fee1`.
 - Reconciled release base: `3c761cda33959226e66642c325beb12355481ba6`; merges published main history into dev without conflicts. Previous-tag ancestry passes.
 - Frozen range: 46 commits, 102 files, +3,268/−686 before release collateral/version changes.
 - Full PR inventory and user-visible changes: `docs/release-notes-0.21.5.md`.
@@ -25,8 +25,9 @@
 | Darwin lease verification | 42/42 passed, including malformed/partial/symlink/foreign bootstrap refusal, deterministic ENOENT contender, repeated 20/32/64 stress |
 | Other focused verification | Native-hook full suite, corrected platform fixtures, real tmux hostile receipt, lint, no-unused, generated/native-agent checks passed |
 | Rust gates | Formatting, clippy with warnings denied, workspace tests passed |
-| Clean whole-product local suite | Failed: 438 of 439 files passed; lease contention still exposes bootstrap publication ambiguity. Latest authenticated-bootstrap isolated stress also reproduces. Release PR #3651 is draft until repaired. |
-| Reconciled versioned candidate local gates | Build, no-unused, generated/native-agent verification and 6 release-body tests passed; final package verification remains pending |
+| Bootstrap-sentinel ABA race (found post-merge) | Fixed via PR #3652 (native `omx-runtime lease-mutex` OS advisory lock serializing the full lease lifecycle); independent full-diff architecture review returned CLEAR/APPROVE with zero findings; PR #3652 exact CI passed in full |
+| Clean whole-product local suite | Rerun in the reconciled release worktree at `e0004b69`+ after the fix; see current run evidence below |
+| Reconciled versioned candidate local gates | Build, lint, no-unused, cargo fmt/clippy/workspace tests, 42/42 lease suite, and full packed-install smoke (real Codex 0.153.4 lifecycle) all passed in the reconciled release worktree |
 | Release collateral PR / exact dev CI | Pending |
 | Protected-main PR review and exact main CI | Pending; one approving review required, no admin bypass |
 | Annotated v0.21.5 tag / native Release workflow | Pending |
