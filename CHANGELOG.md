@@ -8,7 +8,7 @@ All notable changes to this project are documented in this file.
 
 ### Highlights
 
-- Show active Team identity and per-worker progress in the tmux HUD, preserving narrow layouts, selected runtime roots, leader space, and exact resize ownership.
+- Show active Team identity and per-worker progress in the tmux HUD, preserving narrow layouts, selected runtime roots, leader space, and exact resize ownership (#3644).
 - Align plugin-hook diagnostics/setup/uninstall with current Codex capabilities; preserve explicit reasoning effort and verify the real packed hook lifecycle against Codex 0.153.4 (#3627, #3631, #3632, #3650).
 - Allow ordinary native implementation/reporting under inherited permissions and remove active guidance handoffs to retired workflows (#3637, #3647).
 
@@ -16,14 +16,14 @@ All notable changes to this project are documented in this file.
 
 - Keep project runtime-home credentials ephemeral and export child-safe CODEX_HOME for Team workers (#3633).
 - Make Team startup preflight side-effect free and actionable (#3643); restore portable session recovery and hydrated native runtime lookup (#3638, #3639).
-- Respect TOML array-of-tables and POSIX PATH edge cases (#3645).
+- Respect TOML array-of-tables boundaries (#3645) and POSIX PATH edge cases in command discovery (#3644).
 - Fix a real bootstrap-sentinel ABA race in canonical mode-binding lease acquisition, found via post-merge concurrency stress testing; serialize the full lease lifecycle with a new descriptor-bound native OS advisory mutex (#3650, #3652).
 - Correct cross-platform dogfood fixtures without skipping adversarial identity, trust, or no-follow checks; preserve literal tmux receipt hashes and close retained fixture handles (#3650).
 
 ### Maintenance
 
 - Refresh dependency locks (#3640, #3641, #3642), add MIT LICENSE, and measure maintenance growth without additional runtime machinery (#3646).
-- Reconcile published main documentation/history before freezing the new release range.
+- Reconcile published main documentation/history before freezing the new release range (#3651).
 
 Full inventory, contributors, compatibility notes, and verification: [release notes](docs/release-notes-0.21.5.md) and [release readiness](docs/qa/release-readiness-0.21.5.md).
 

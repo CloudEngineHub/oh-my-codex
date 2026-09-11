@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **Active Team progress in the tmux HUD:** show the active team identity and each worker's status/task, retain readable narrow layouts and leader space, use the selected runtime state root, and fence resize reconciliation by exact session ownership.
+- **Active Team progress in the tmux HUD:** show the active team identity and each worker's status/task, retain readable narrow layouts and leader space, use the selected runtime state root, and fence resize reconciliation by exact session ownership (#3644).
 - **Current Codex lifecycle:** align plugin-hook diagnostics/setup/uninstall with current Codex capabilities; preserve user-owned reasoning effort; dogfood the real hook trust lifecycle against exact Codex CLI 0.153.4.
 - **Safe ordinary execution:** ordinary native implementation/reporting respects inherited permissions instead of obsolete workflow restrictions (#3637). Active guidance no longer hands users to retired workflows (#3647).
 
@@ -20,6 +20,7 @@ The packed-install live lifecycle is pinned to Codex 0.153.4. Unsupported instal
 
 ## Merged PR inventory
 
+- [#3644](https://github.com/Yeachan-Heo/oh-my-codex/pull/3644): active-team identity and per-worker progress in the tmux HUD, including POSIX PATH edge-case fixes and resize-hook session-owner fencing.
 - [#3627](https://github.com/Yeachan-Heo/oh-my-codex/pull/3627): current Codex hook capability diagnostics.
 - [#3631](https://github.com/Yeachan-Heo/oh-my-codex/pull/3631): preserve user-owned reasoning effort.
 - [#3632](https://github.com/Yeachan-Heo/oh-my-codex/pull/3632): remaining plugin-hook lifecycle corrections.
@@ -33,9 +34,10 @@ The packed-install live lifecycle is pinned to Codex 0.153.4. Unsupported instal
 - [#3646](https://github.com/Yeachan-Heo/oh-my-codex/pull/3646): maintenance inventory.
 - [#3647](https://github.com/Yeachan-Heo/oh-my-codex/pull/3647): retire stale workflow handoffs.
 - [#3650](https://github.com/Yeachan-Heo/oh-my-codex/pull/3650): current Codex/macOS dogfood, receipt and fixture corrections.
+- [#3651](https://github.com/Yeachan-Heo/oh-my-codex/pull/3651): 0.21.5 release preparation and reconciliation with published main.
 - [#3652](https://github.com/Yeachan-Heo/oh-my-codex/pull/3652): native OS mutex serialization for canonical mode-binding leases, fixing a real bootstrap-sentinel ABA race found via post-merge concurrency stress testing.
 
-The active-team HUD series and POSIX PATH correction also landed directly in the compare range. Main-only 0.21.4 documentation/history was merged back before freezing this candidate; it is preserved rather than described as a new feature.
+Main-only 0.21.4 documentation/history was merged back before freezing this candidate; it is preserved rather than described as a new feature.
 
 ## Validation evidence
 
