@@ -7,6 +7,7 @@
 - Reconciled release base: `3c761cda33959226e66642c325beb12355481ba6`; merges published main history into dev without conflicts. Previous-tag ancestry passes.
 - Frozen range: 46 commits, 102 files, +3,268/−686 before release collateral/version changes.
 - Full PR inventory and user-visible changes: `docs/release-notes-0.21.5.md`.
+- Final dev candidate commit: `3d2743b33db3f4ed4385fe826a24ac60aef8a19c` (merged PR #3651 release preparation + PR #3657 PR-inventory correction).
 - User authorization: this session requested dogfood and a new release only if LGTM, then explicitly requested fixing all blockers under Ultragoal.
 - Parent checkout contains an unrelated user README edit; it was not committed or overwritten. Release preparation uses a clean checkout.
 
@@ -28,7 +29,7 @@
 | Bootstrap-sentinel ABA race (found post-merge) | Fixed via PR #3652 (native `omx-runtime lease-mutex` OS advisory lock serializing the full lease lifecycle); independent full-diff architecture review returned CLEAR/APPROVE with zero findings; PR #3652 exact CI passed in full |
 | Clean whole-product local suite | **Passed**: all 439 test files, 0 failures, clean exit 0, at reconciled commit `859555b1` (`TMPDIR=/private/tmp npm run test:node`). Also passed: `verify:native-agents` (18 agents/32 prompt assets), `verify:plugin-bundle` (24 skill dirs), `verify:capabilities-lock`, `verify:prompt-guidance`, generated-catalog-docs check, prompt-inventory check |
 | Reconciled versioned candidate local gates | Build, lint, no-unused, cargo fmt/clippy/workspace tests, 42/42 lease suite, and full packed-install smoke (real Codex 0.153.4 lifecycle) all passed in the reconciled release worktree |
-| Release collateral PR / exact dev CI | PR #3651 (draft) open against dev; CI pending on this update |
+| Release collateral PR / exact dev CI | PR #3651 merged (`b2e7afa2`); PR #3657 inventory correction merged (`3d2743b3`). Dev CI for final candidate `3d2743b3`: [34560825883](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/34560825883), conclusion `success` |
 | Protected-main PR review and exact main CI | Pending; one approving review required, no admin bypass |
 | Annotated v0.21.5 tag / native Release workflow | Pending |
 | Exact tag/SHA trusted OIDC npm publish | Pending |
