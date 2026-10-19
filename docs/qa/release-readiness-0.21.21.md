@@ -5,7 +5,7 @@
 - Previous tag: `v0.21.20` (`b5410bf8`)
 - Frozen candidate: `3a03651f0a989b7328987b5de9d1ee6ef89154dd` (dev CI candidate)
 - Compare range: `v0.21.20..3a03651f0a989b7328987b5de9d1ee6ef89154dd`, 5 commits, 7 files, +174/−104
-- PRs: #3833 (Windows shim path generation), #3837 (stale-launcher warning diagnostics)
+- PRs: #3833 (Windows shim path generation), #3835 (team readiness deadline), #3837 (stale-launcher warning diagnostics)
 
 ## Version choice
 
