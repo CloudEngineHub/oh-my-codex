@@ -1,6 +1,6 @@
 # oh-my-codex 0.21.21
 
-`0.21.21` is a patch release for Windows shim path correctness, stale-launcher warning improvements, test coverage restoration, and dynamic version handling (5 commits, 10 files, +190/−128; PRs #3833, #3835, #3837).
+`0.21.21` is a patch release for Windows shim path correctness, stale-launcher warning improvements, test coverage restoration, and dynamic version handling (5 commits, 7 files, +174/−104; PRs #3833, #3835, #3837).
 
 Versioning continues the 0.21.x patch train. This release fixes filesystem path generation on POSIX systems when Windows shim paths are involved, and restores test coverage for stale-launcher diagnostic messaging split by provenance reason.
 

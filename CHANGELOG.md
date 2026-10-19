@@ -4,9 +4,25 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.22] - 2026-10-19
+
+Patch release for fail-closed cache recovery guidance in setup repair (3 commits, 13 files, +178/−28; PR #3842). Also includes doc corrections for v0.21.21 release stats.
+
+### Fixed
+
+- Fix `omx setup --repair-plugin-cache` to avoid recommending users delete plugin snapshots pinned by live Codex sessions or non-directory symlink entries. The repair now emits fail-closed guidance instead of suggesting blind removal (#3842, @gajae-gajae).
+
+### Documentation
+
+- Correct v0.21.21 release range stats from (10 files, +190/−128) to accurate (7 files, +174/−104).
+
+Full inventory, contributors, compatibility notes, and verification: [release notes](docs/release-notes-0.21.22.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.21...v0.21.22
+
 ## [0.21.21] - 2026-10-19
 
-Patch release for Windows shim path generation on POSIX systems, stale-launcher warning diagnostics, team worker readiness enforcement, and dynamic version handling in tests (5 commits, 10 files, +190/−128; PRs #3833, #3835, #3837).
+Patch release for Windows shim path generation on POSIX systems, stale-launcher warning diagnostics, team worker readiness enforcement, and dynamic version handling in tests (5 commits, 7 files, +174/−104; PRs #3833, #3835, #3837).
 
 ### Fixed
 
