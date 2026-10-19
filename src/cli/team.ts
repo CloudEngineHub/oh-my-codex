@@ -1,3 +1,5 @@
+import { getAgent } from '../agents/definitions.js';
+import { inferTaskEvidenceIntent, QUOTED_LITERAL } from '../team/task-evidence-intent.js';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { updateModeState, startMode, readModeState } from '../modes/base.js';
@@ -967,6 +969,7 @@ type DecompositionStrategy = 'numbered' | 'bulleted' | 'conjunction' | 'atomic';
 interface DecompositionCandidate {
   subject: string;
   description: string;
+  requires_code_change?: boolean;
 }
 
 interface DecompositionPlan {
@@ -976,7 +979,7 @@ interface DecompositionPlan {
 
 export interface TeamExecutionPlan {
   workerCount: number;
-  tasks: Array<{ subject: string; description: string; owner: string; role?: string }>;
+  tasks: Array<{ subject: string; description: string; owner: string; role?: string; requires_code_change?: boolean }>;
   overOrchestrationNotice?: {
     code: 'team_over_orchestration_warning' | 'explicit_team_override_acknowledged';
     message: string;
@@ -1036,7 +1039,11 @@ export function buildTeamExecutionPlan(
   explicitAgentType: boolean,
   explicitWorkerCount = false,
 ): TeamExecutionPlan {
-  const plan = splitTaskString(task);
+  let plan = splitTaskString(task);
+  // Keep the original request when splitting changes a described action into a command.
+  if (inferTaskEvidenceIntent(task).analysisOnly && plan.subtasks.some(part => inferTaskEvidenceIntent(part.description).codeChangeRequested)) {
+    plan = { strategy: 'atomic', subtasks: [{ subject: task.slice(0, 80), description: task }] };
+  }
   const taskSize = classifyTaskSize(task).size;
   const effectiveWorkerCount = resolveTeamFanoutLimit(
     task,
@@ -1060,19 +1067,22 @@ export function buildTeamExecutionPlan(
         : undefined
     : undefined;
 
+  const assignRole = (st: DecompositionCandidate) => {
+    const role = explicitAgentType ? agentType
+      : routeTaskToRole(st.subject, st.description, 'team-exec', fallbackRole).role;
+    // CLI subjects are truncated for display; descriptions retain the full request.
+    const { codeChangeRequested, analysisOnly } = inferTaskEvidenceIntent(st.description);
+    const implicitAnalysis = !explicitAgentType && analysisOnly;
+    return { ...st, role, requires_code_change: !explicitAgentType && st.requires_code_change !== undefined
+      ? st.requires_code_change : (!explicitAgentType && codeChangeRequested) || (!implicitAnalysis && (getAgent(role)?.tools ?? 'execution') === 'execution') };
+  };
+
   let subtasks = plan.subtasks;
   const usedAspectSubtasks = subtasks.length <= 1 && effectiveWorkerCount > 1;
-  if (subtasks.length <= 1 && effectiveWorkerCount > 1) {
-    subtasks = createAspectSubtasks(task, effectiveWorkerCount);
+  if (usedAspectSubtasks) {
+    subtasks = createAspectSubtasks(task, effectiveWorkerCount, assignRole(subtasks[0]).requires_code_change);
   }
-
-  const tasksWithRoles = subtasks.map((st) => {
-    if (explicitAgentType) {
-      return { ...st, role: agentType };
-    }
-    const result = routeTaskToRole(st.subject, st.description, 'team-exec', fallbackRole);
-    return { ...st, role: result.role };
-  });
+  const tasksWithRoles = subtasks.map(assignRole);
 
   const normalizedRoles = new Set(tasksWithRoles.map((task) => (task.role ?? '').trim()));
   const tasks = usedAspectSubtasks && tasksWithRoles.length > 1 && normalizedRoles.size <= 1
@@ -1099,7 +1109,7 @@ export function decomposeTaskString(
   agentType: string,
   explicitAgentType: boolean,
   explicitWorkerCount = false,
-): Array<{ subject: string; description: string; owner: string; role?: string }> {
+): TeamExecutionPlan['tasks'] {
   return buildTeamExecutionPlan(task, workerCount, agentType, explicitAgentType, explicitWorkerCount).tasks;
 }
 
@@ -1108,7 +1118,7 @@ const TASK_LABEL_PREFIX = /^(?:task|step|phase|part)\s+[\w-]+(?:\s+[\w-]+)?$/i;
 const ANALYSIS_TASK_PREFIX = /^(?:analy(?:se|ze)|audit|assess|evaluate|explore|investigate|research|review|study|summari(?:s|z)e)\b/i;
 const ANALYSIS_DELIVERABLE_SIGNAL = /\b(?:actionable recommendations?|evidence(?: pointers?)?|findings?|issue|operator|report|root cause|summary|user impact|write-?up)\b/i;
 const CONTEXTUAL_DECOMPOSITION_CLAUSE = /\b(?:focusing on|focus on|including|covers?|covering|with|while|without|ensuring|suitable for|root cause|user impact|evidence pointers|actionable recommendations)\b/i;
-const BULLET_LINE_PATTERN = /^(?:[-*•]|(?:\[\s?[xX]?\]))\s+(.+)$/;
+const BULLET_LINE_PATTERN = /^[\t ]*(?:[-*•]|(?:\[[\t ]?[xX]?\]))[\t ]+(.+)$/gm;
 const FILE_REFERENCE_PATTERN = /(?:^|[\s`'"])([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)(?=$|[\s`'",;:])/g;
 const CODE_SYMBOL_PATTERN = /[`'][A-Za-z_][A-Za-z0-9_.-]*[`']/g;
 const PARALLELIZATION_SIGNAL = /\b(?:acceptance criteria|cross[\s-]cutting|independent|in parallel|separately|verification|verify|tests?|docs?|documentation|benchmarks?|migration|rollout)\b/i;
@@ -1149,10 +1159,17 @@ function canSafelySplitWeakTaskList(task: string, parts: string[]): boolean {
 
 /** Split a task string into sub-tasks using numbered lists or conservative delimiters. */
 function splitTaskString(task: string): DecompositionPlan {
+  if ([...task.matchAll(QUOTED_LITERAL)].some(([literal]) => /[,;\r\n]|\band\b|\d+[.)]\s/i.test(literal))) {
+    return { strategy: 'atomic', subtasks: [{ subject: task.slice(0, 80), description: task }] };
+  }
+
   // Try numbered list: "1. foo 2. bar 3. baz" or "1) foo 2) bar"
   const numberedPattern = /(?:^|\s)(\d+)[.)]\s+/g;
-  const numberedMatches = [...task.matchAll(numberedPattern)];
+  const numberedMatches = [...task.matchAll(numberedPattern)]
+    .filter(match => /^[\r\n]/.test(match[0]) || !/\b(?:version|release|revision|node|v)[\t ]*$/i.test(task.slice(0, match.index)));
   if (numberedMatches.length >= 2) {
+    const header = task.slice(0, numberedMatches[0].index).trim();
+    const analysisHeader = inferTaskEvidenceIntent(header).analysisOnly ? header : '';
     const parts: Array<{ subject: string; description: string }> = [];
     for (let i = 0; i < numberedMatches.length; i++) {
       const prefixLen = numberedMatches[i][0].length;
@@ -1160,21 +1177,25 @@ function splitTaskString(task: string): DecompositionPlan {
       const end = i + 1 < numberedMatches.length ? numberedMatches[i + 1].index! : task.length;
       const text = task.slice(contentStart, end).trim();
       if (text) {
-        parts.push({ subject: text.slice(0, 80), description: text });
+        parts.push({ subject: text.slice(0, 80), description: analysisHeader
+          ? `${analysisHeader}\n${numberedMatches[i][0].trim()} ${text}` : text });
       }
     }
     if (parts.length >= 2) return { strategy: 'numbered', subtasks: parts };
   }
 
-  const bulletParts = task
-    .split(/\r?\n+/)
-    .map((line) => line.trim())
-    .map((line) => line.match(BULLET_LINE_PATTERN)?.[1]?.trim() ?? '')
-    .filter((line) => line.length > 0);
-  if (bulletParts.length >= 2) {
+  const bulletMatches = [...task.matchAll(BULLET_LINE_PATTERN)];
+  if (bulletMatches.length >= 2) {
+    const header = task.slice(0, bulletMatches[0].index).trim();
+    const analysisHeader = inferTaskEvidenceIntent(header).analysisOnly ? header : '';
     return {
       strategy: 'bulleted',
-      subtasks: bulletParts.map((part) => ({ subject: part.slice(0, 80), description: part })),
+      subtasks: bulletMatches.map((match, index) => {
+        const end = bulletMatches[index + 1]?.index ?? task.length;
+        const contentStart = match.index! + match[0].length - match[1].length;
+        return { subject: match[1].trim().slice(0, 80), description: analysisHeader
+          ? `${analysisHeader}\n${task.slice(match.index, end).trim()}` : task.slice(contentStart, end).trim() };
+      }),
     };
   }
 
@@ -1205,11 +1226,12 @@ function splitTaskString(task: string): DecompositionPlan {
 function createAspectSubtasks(
   task: string,
   workerCount: number,
-): Array<{ subject: string; description: string }> {
+  requiresCodeChange: boolean,
+): DecompositionCandidate[] {
   const aspects = [
-    { subject: `Implement: ${task}`.slice(0, 80), description: `Implement the core functionality for: ${task}` },
-    { subject: `Test: ${task}`.slice(0, 80), description: `Write tests and verify: ${task}` },
-    { subject: `Review and document: ${task}`.slice(0, 80), description: `Review code quality and update documentation for: ${task}` },
+    { subject: `Implement: ${task}`.slice(0, 80), description: `Implement the core functionality for: ${task}`, requires_code_change: requiresCodeChange },
+    { subject: `Test: ${task}`.slice(0, 80), description: `Write tests and verify: ${task}`, requires_code_change: requiresCodeChange },
+    { subject: `Review and document: ${task}`.slice(0, 80), description: `Review code quality and update documentation for: ${task}`, requires_code_change: false },
   ];
 
   // Return up to workerCount aspects, repeating implementation for extra workers
@@ -1219,6 +1241,7 @@ function createAspectSubtasks(
     result.push({
       subject: `Additional work (${idx + 1}): ${task}`.slice(0, 80),
       description: `Continue implementation work on: ${task}`,
+      requires_code_change: requiresCodeChange,
     });
   }
   return result;
@@ -1226,10 +1249,10 @@ function createAspectSubtasks(
 
 /** Distribute tasks across workers using an inspectable allocation policy. */
 function distributeTasksToWorkers(
-  tasks: Array<{ subject: string; description: string; role?: string; blocked_by?: string[] }>,
+  tasks: Array<{ subject: string; description: string; role?: string; blocked_by?: string[]; requires_code_change?: boolean }>,
   workerCount: number,
   workerRole?: string,
-): Array<{ subject: string; description: string; owner: string; role?: string }> {
+): TeamExecutionPlan['tasks'] {
   const workers = Array.from({ length: workerCount }, (_, index) => ({
     name: `worker-${index + 1}`,
     role: workerRole,
