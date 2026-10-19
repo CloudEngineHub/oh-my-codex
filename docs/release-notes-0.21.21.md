@@ -1,6 +1,6 @@
 # oh-my-codex 0.21.21
 
-`0.21.21` is a patch release for Windows shim path correctness and stale-launcher warning improvements (3 commits, 7 files, +174/−104; PRs #3833, #3837).
+`0.21.21` is a patch release for Windows shim path correctness, stale-launcher warning improvements, test coverage restoration, and dynamic version handling (5 commits, 10 files, +190/−128; PRs #3833, #3835, #3837).
 
 Versioning continues the 0.21.x patch train. This release fixes filesystem path generation on POSIX systems when Windows shim paths are involved, and restores test coverage for stale-launcher diagnostic messaging split by provenance reason.
 
@@ -24,6 +24,7 @@ The pinned candidate `3a03651f0a989b7328987b5de9d1ee6ef89154dd` passed latest-pe
 | PR | Author | Title |
 |---|---|---|
 | [#3833](https://github.com/Yeachan-Heo/oh-my-codex/pull/3833) | @Yeachan-Heo | Fix Windows shim path generation on POSIX systems |
+| [#3835](https://github.com/Yeachan-Heo/oh-my-codex/pull/3835) | @Yeachan-Heo | fix(team): enforce the readiness deadline after the final poll |
 | [#3837](https://github.com/Yeachan-Heo/oh-my-codex/pull/3837) | @Yeachan-Heo | fix: restore tests and split stale-launcher warning by provenance reason |
 
 ## Contributors

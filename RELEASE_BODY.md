@@ -1,10 +1,11 @@
 # oh-my-codex 0.21.21
 
-`0.21.21` is a patch release for Windows shim path correctness and stale-launcher warning improvements (3 commits, 7 files, +174/−104; PRs #3833, #3837).
+`0.21.21` is a patch release for Windows shim path correctness, stale-launcher warning improvements, team worker readiness enforcement, and dynamic version handling in tests (5 commits, 10 files, +190/−128; PRs #3833, #3835, #3837).
 
 ## Highlights
 
 - **Windows shim path generation on POSIX (#3833):** Fix path generation for Windows shims on POSIX systems to use host paths instead of stray backslash-prefixed paths. Filesystem writes in setup/uninstall/codex-hooks no longer create unintended `\tmp\…` entries.
+- **Team worker readiness deadline (#3835):** Enforce the configured readiness deadline on the final poll, preventing team worker readiness from reporting ready after the timeout expires.
 - **Stale-launcher warning diagnostics (#3837):** Restore test coverage for stale-launcher warnings and split messaging by provenance reason (missing-launcher vs. incompatible provenance). Diagnostic output is more specific and test assertions are comprehensive.
 
 ## Compatibility
@@ -23,6 +24,7 @@
 | PR | Author | Title |
 |---|---|---|
 | [#3833](https://github.com/Yeachan-Heo/oh-my-codex/pull/3833) | @Yeachan-Heo | Fix Windows shim path generation on POSIX systems |
+| [#3835](https://github.com/Yeachan-Heo/oh-my-codex/pull/3835) | @Yeachan-Heo | fix(team): enforce the readiness deadline after the final poll |
 | [#3837](https://github.com/Yeachan-Heo/oh-my-codex/pull/3837) | @Yeachan-Heo | fix: restore tests and split stale-launcher warning by provenance reason |
 
 ## Contributors
