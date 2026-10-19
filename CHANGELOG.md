@@ -6,7 +6,7 @@ All notable changes to this project are documented in this file.
 
 ## [0.21.22] - 2026-10-19
 
-Patch release for fail-closed cache recovery guidance in setup repair (1 commit, 5 files, +66/−6; PR #3842). Also includes doc corrections for v0.21.21 release stats.
+Patch release for fail-closed cache recovery guidance in setup repair (3 commits, 13 files, +178/−28; PR #3842). Also includes doc corrections for v0.21.21 release stats.
 
 ### Fixed
 

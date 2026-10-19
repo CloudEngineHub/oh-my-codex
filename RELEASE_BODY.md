@@ -1,6 +1,6 @@
 # oh-my-codex 0.21.22
 
-`0.21.22` is a patch release for fail-closed cache recovery guidance in setup repair (1 commit, 5 files, +66/−6; PR #3842).
+`0.21.22` is a patch release for fail-closed cache recovery guidance in setup repair (3 commits, 13 files, +178/−28; PR #3842).
 
 ## Highlights
 
