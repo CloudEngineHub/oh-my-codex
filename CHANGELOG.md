@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.21] - 2026-10-19
+
+Patch release for Windows shim path generation on POSIX systems, stale-launcher warning diagnostics, team worker readiness enforcement, and dynamic version handling in tests (5 commits, 10 files, +190/−128; PRs #3833, #3835, #3837).
+
+### Fixed
+
+- Fix path generation for Windows shims on POSIX systems to use host paths instead of stray backslash-prefixed paths, preventing unintended `\tmp\…` entries from filesystem writes in setup/uninstall/codex-hooks (#3833, @Yeachan-Heo).
+- Enforce the configured readiness deadline (`OMX_TEAM_READY_TIMEOUT_MS`) on the final readiness poll, preventing team worker readiness from reporting ready after the timeout expires. Incompatibility markers remain fail-closed (#3835, @Yeachan-Heo).
+- Restore test coverage and split stale-launcher diagnostic messaging by provenance reason (missing-launcher vs. incompatible provenance), improving diagnostic specificity (#3837, @Yeachan-Heo).
+- Replace hardcoded version literals in tests with dynamic version reading from package.json to prevent test failures on future version bumps (test fix for #3839, @gajae-gajae).
+
+Full inventory, contributors, compatibility notes, and verification: [release notes](docs/release-notes-0.21.21.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.20...v0.21.21
+
 ## [0.21.20] - 2026-10-19
 
 Patch release for team worker readiness deadline enforcement during final poll (2 commits, 8 files, +110/−18; PR #3835).
