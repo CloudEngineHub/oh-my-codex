@@ -42,6 +42,7 @@ import {
 	registerOmxPluginCacheLivePin,
 	resolvePackagedOmxMarketplace,
 	computeOmxPluginCacheClaimDigest,
+	setPluginCacheMutationHooksForTest,
 } from "../plugin-marketplace.js";
 import {
 	buildManagedCodexHookTrustState,
@@ -56,7 +57,8 @@ const packageRoot = process.cwd();
 
 async function writeBoundCompletionMarker(cacheDir: string): Promise<void> {
 	const claimDigest = await computeOmxPluginCacheClaimDigest(cacheDir);
-	await writeFile(join(cacheDir, ".omx-complete"), `${JSON.stringify({ claimDigest })}\n`);
+	const version = basename(cacheDir);
+	await writeFile(join(cacheDir, ".omx-complete"), `${JSON.stringify({ version, claimDigest })}\n`);
 }
 let previousPathForFakeCodex: string | undefined;
 let fakeCodexBinDir: string | null = null;
@@ -705,6 +707,15 @@ async function seedSameVersionPluginCacheWithStaleHooks(codexHomeDir: string): P
 	assert.ok(preToolUse, "expected packaged plugin PreToolUse hook fixture");
 	preToolUse.matcher = "Bash";
 	await writeFile(hooksPath, JSON.stringify(hooks, null, 2) + "\n");
+	const manifest = JSON.parse(await readFile(join(packageRoot, "plugins", "oh-my-codex", ".codex-plugin", "plugin.json"), "utf-8")) as { version: string };
+	const ownershipRecord = {
+		version: 1,
+		cacheVersion: manifest.version,
+		pid: 99999999,
+		processStartHash: null,
+		livePinSupportVersion: 1,
+	};
+	await writeFile(join(cacheDir, ".omx-managed"), `${JSON.stringify(ownershipRecord)}\n`);
 	await writeBoundCompletionMarker(cacheDir);
 	return cacheDir;
 }
@@ -720,6 +731,15 @@ async function seedSameVersionPluginCacheWithStaleLauncher(codexHomeDir: string)
 		join(cacheDir, "hooks", "omx-command.json"),
 		JSON.stringify({ command: "/stale/node", argsPrefix: ["/stale/omx.js"] }, null, 2) + "\n",
 	);
+	const manifest = JSON.parse(await readFile(join(packageRoot, "plugins", "oh-my-codex", ".codex-plugin", "plugin.json"), "utf-8")) as { version: string };
+	const ownershipRecord = {
+		version: 1,
+		cacheVersion: manifest.version,
+		pid: 99999999,
+		processStartHash: null,
+		livePinSupportVersion: 1,
+	};
+	await writeFile(join(cacheDir, ".omx-managed"), `${JSON.stringify(ownershipRecord)}\n`);
 	await writeBoundCompletionMarker(cacheDir);
 	return cacheDir;
 }
@@ -1570,7 +1590,180 @@ describe("omx setup install mode behavior", () => {
 	}
 });
 
+	it("asserts removalSafe field values for cache repair outcomes", async () => {
+		const wd = await mkdtemp(join(tmpdir(), "omx-setup-removalSafe-"));
+		try {
+			await withIsolatedUserHome(wd, async (codexHomeDir) => {
+				await withTempCwd(wd, async () => {
+					const packagedMarketplace = await resolvePackagedOmxMarketplace(packageRoot);
+					assert.ok(packagedMarketplace);
 
+					// Test 1: untrusted/symlink cache - removalSafe should be false
+					const cacheBaseDir = await packagedPluginCacheDir(codexHomeDir);
+					await mkdir(dirname(cacheBaseDir), { recursive: true });
+					const externalCacheDir = join(wd, "external-cache");
+					await mkdir(externalCacheDir, { recursive: true });
+					await symlink(externalCacheDir, cacheBaseDir);
+					const untrustedResult = await materializePackagedOmxPluginCache(codexHomeDir, packagedMarketplace);
+					assert.equal(untrustedResult.status, "stale-launcher");
+					assert.match(untrustedResult.reason ?? "", /symlink or non-directory entry/);
+					assert.equal(untrustedResult.removalSafe, false, "untrusted symlink should have removalSafe=false");
+
+					// Test 2a: late-pin - pin created after inspection but before removal
+					const wd2a = await mkdtemp(join(tmpdir(), "omx-setup-late-pin-"));
+					try {
+						await withIsolatedUserHome(wd2a, async (codexHomeDir2a) => {
+							await withTempCwd(wd2a, async () => {
+								// Setup: create a valid managed cache
+								const cacheDir = await seedSameVersionPluginCacheWithStaleHooks(codexHomeDir2a);
+								await writeBoundCompletionMarker(cacheDir);
+
+								// Setup: inject a hook that creates a live pin AFTER inspection but BEFORE actual removal
+								let hookCalled = false;
+								const originalRestore = setPluginCacheMutationHooksForTest({
+									beforeRemoveSyscall: async (path: string) => {
+										// Simulate late-pin: create a live pin after the initial checks
+										// Run the hook only once, the first time it's called
+										if (!hookCalled) {
+											hookCalled = true;
+											const { createHash } = await import("node:crypto");
+											const sessionHash = createHash("sha256").update("test-late-pin-session").digest("hex");
+											const pinDir = join(path, ".omx-live-pin");
+											await mkdir(pinDir, { recursive: true });
+											const pinRecord = {
+												version: 1,
+												pid: process.pid,
+												processStartHash: null,
+												sessionHash,
+											};
+											const pinFilePath = join(pinDir, `session-${sessionHash}.json`);
+											await writeFile(pinFilePath, `${JSON.stringify(pinRecord)}\n`);
+										}
+									},
+								});
+
+								try {
+									const latePinResult = await materializePackagedOmxPluginCache(
+										codexHomeDir2a,
+										packagedMarketplace,
+										{ repairCache: true },
+									);
+									assert.equal(latePinResult.status, "stale-launcher", "(a) late-pin should result in stale-launcher status");
+									assert.equal(hookCalled, true, "(a) late-pin: pin must be created after inspection, inside the removal path");
+									assert.match(latePinResult.reason ?? "", /pinned by a live Codex session|became pinned or changed during repair/, "(a) late-pin: should cite pin/change reason");
+									assert.equal(latePinResult.removalSafe, false, "(a) late-pin should have removalSafe=false");
+									// Verify snapshot remains untouched
+									assert.equal(existsSync(cacheDir), true, "(a) late-pin: snapshot should remain untouched");
+								} finally {
+									originalRestore();
+								}
+							});
+						});
+					} finally {
+						await rm(wd2a, { recursive: true, force: true });
+					}
+
+					// Test 2b: live-pin present before repair
+					const wd2b = await mkdtemp(join(tmpdir(), "omx-setup-live-pin-"));
+					try {
+						await withIsolatedUserHome(wd2b, async (codexHomeDir2b) => {
+							await withTempCwd(wd2b, async () => {
+								// Setup: create a managed cache with a stale launcher and a live pin
+								// This ensures the test exercises the repair eligibility path (not the unchanged fast path)
+								const cacheDir = await seedSameVersionPluginCacheWithStaleLauncher(codexHomeDir2b);
+								await registerOmxPluginCacheLivePin(
+									cacheDir,
+									"test-live-pin-session",
+									process.pid,
+								);
+
+								const livePinResult = await materializePackagedOmxPluginCache(
+									codexHomeDir2b,
+									packagedMarketplace,
+									{ repairCache: true },
+								);
+								assert.equal(livePinResult.status, "stale-launcher", "(b) live-pin should result in stale-launcher status");
+								assert.match(livePinResult.reason ?? "", /pinned by a live Codex session/, "(b) live-pin: should cite live session reason");
+								assert.equal(livePinResult.removalSafe, false, "(b) live-pin should have removalSafe=false");
+							});
+						});
+					} finally {
+						await rm(wd2b, { recursive: true, force: true });
+					}
+
+					// Test 2c: safe repair - no pins, successful removal
+					const wd2c = await mkdtemp(join(tmpdir(), "omx-setup-safe-repair-"));
+					try {
+						await withIsolatedUserHome(wd2c, async (codexHomeDir2c) => {
+							await withTempCwd(wd2c, async () => {
+								// Setup: create a stale cache that can be safely removed
+								const cacheDir = await seedSameVersionPluginCacheWithStaleHooks(codexHomeDir2c);
+								await writeBoundCompletionMarker(cacheDir);
+
+								const safeRepairResult = await materializePackagedOmxPluginCache(
+									codexHomeDir2c,
+									packagedMarketplace,
+									{ repairCache: true },
+								);
+								assert.equal(safeRepairResult.status, "materialized", "(c) safe repair should succeed and materialize");
+								// removalSafe should be undefined or true (treated as safe)
+								assert.notEqual(safeRepairResult.removalSafe, false, "(c) safe repair should NOT have removalSafe=false");
+							});
+						});
+					} finally {
+						await rm(wd2c, { recursive: true, force: true });
+					}
+				});
+			});
+		} finally {
+			await rm(wd, { recursive: true, force: true });
+		}
+	});
+
+	it("does not suggest codex plugin remove for dry-run repair with live pin", async () => {
+		const wd = await mkdtemp(join(tmpdir(), "omx-setup-dry-run-live-pin-"));
+		try {
+			await withIsolatedUserHome(wd, async (codexHomeDir) => {
+				await withTempCwd(wd, async () => {
+					await mkdir(join(wd, ".omx"), { recursive: true });
+					const hudConfigPath = join(wd, ".omx", "hud-config.json");
+					const userHudConfig = '{"preset":"custom"}\n';
+					await writeFile(hudConfigPath, userHudConfig);
+					const packagedMarketplace = await resolvePackagedOmxMarketplace(packageRoot);
+					assert.ok(packagedMarketplace);
+					const initial = await materializePackagedOmxPluginCache(codexHomeDir, packagedMarketplace);
+					assert.equal(initial.status, "materialized");
+					const cacheDir = initial.cacheDir!;
+
+					// Register a live pin
+					await registerOmxPluginCacheLivePin(cacheDir, "dry-run-live-session", process.pid);
+
+					// Run setup with dry-run and repair on byte-identical cache with live pin
+					// The cache is unchanged (byte-identical), so dry-run should return unchanged, not report removal
+					const dryRunOutput = await captureConsoleOutput(async () => {
+						await setup({
+							scope: "user",
+							installMode: "plugin",
+							repairPluginCache: true,
+							dryRun: true,
+							pluginAgentsMdPrompt: async () => false,
+							codexFeaturesProbe: () => "hooks stable true\nplugin_hooks experimental true\ngoals experimental true\n",
+							codexVersionProbe: () => "codex-cli 0.999.0",
+						});
+					});
+
+					// Verify that removal was NOT suggested (because cache is unchanged)
+					assert.doesNotMatch(dryRunOutput, /codex plugin remove/);
+					// Verify that "close that session" advice is NOT printed (because cache is unchanged, no repair needed)
+					assert.doesNotMatch(dryRunOutput, /close that session before repairing it/);
+					// Cache should report as already correct
+					assert.match(dryRunOutput, /Local Codex plugin cache already exposes packaged OMX skills/);
+				});
+			});
+		} finally {
+			await rm(wd, { recursive: true, force: true });
+		}
+	});
 
 	it("rejects scoped plugin-cache repair outside plugin setup mode", async () => {
 		const wd = await mkdtemp(join(tmpdir(), "omx-setup-plugin-cache-mode-"));
@@ -1588,6 +1781,47 @@ describe("omx setup install mode behavior", () => {
 						}),
 						/--repair-plugin-cache requires plugin setup mode/,
 					);
+				});
+			});
+		} finally {
+			await rm(wd, { recursive: true, force: true });
+		}
+	});
+
+	it("verifies setup output uses removalSafe field to gate 'codex plugin remove' advice", async () => {
+		// Test that setup.ts checks removalSafe !== false before advising 'codex plugin remove'
+		const wd = await mkdtemp(join(tmpdir(), "omx-setup-removal-gate-"));
+		try {
+			await withIsolatedUserHome(wd, async (codexHomeDir) => {
+				await withTempCwd(wd, async () => {
+					const packagedMarketplace = await resolvePackagedOmxMarketplace(packageRoot);
+					assert.ok(packagedMarketplace);
+
+					// (d-i) Verify that removalSafe=false (untrusted symlink cache) does NOT output 'codex plugin remove' advice
+					const cacheBaseDir = await packagedPluginCacheDir(codexHomeDir);
+					await mkdir(dirname(cacheBaseDir), { recursive: true });
+					const externalCacheDir = join(wd, "external-cache");
+					await mkdir(externalCacheDir, { recursive: true });
+					await symlink(externalCacheDir, cacheBaseDir);
+
+					const unsafeOutput = await captureConsoleOutput(async () => {
+						await setup({ scope: "user", installMode: "plugin" });
+					});
+					// When removalSafe=false, the setup command SHOULD NOT output 'codex plugin remove' advice
+					assert.match(unsafeOutput, /symlink or non-directory entry/);
+					assert.doesNotMatch(unsafeOutput, /codex plugin remove/, "(d-i) untrusted symlink cache should not suggest 'codex plugin remove'");
+
+					// (d-ii) Verify that safe repair (dead launcher) DOES output 'codex plugin remove' advice
+					await rm(codexHomeDir, { recursive: true, force: true });
+					await mkdir(dirname(codexHomeDir), { recursive: true });
+					const cacheDir = await seedSameVersionPluginCacheWithStaleLauncher(codexHomeDir);
+
+					const safeOutput = await captureConsoleOutput(async () => {
+						await setup({ scope: "user", installMode: "plugin" });
+					});
+					// When removalSafe !== false (safe repair for dead launcher), the setup command SHOULD output 'codex plugin remove' advice
+					assert.match(safeOutput, /pinned launcher command does not exist/);
+					assert.match(safeOutput, /codex plugin remove oh-my-codex@oh-my-codex-local --json/, "(d-ii) dead launcher safe repair should suggest 'codex plugin remove'");
 				});
 			});
 		} finally {
