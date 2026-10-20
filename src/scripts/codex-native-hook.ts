@@ -2312,10 +2312,14 @@ async function buildPersistedSubagentReopenContext(
     return null;
   }
   try {
+    const payload = safeObject(options.payload);
+    const toolsValue = payload.available_tools ?? payload.availableTools ?? payload.tools;
+    const availableTools = Array.isArray(toolsValue) ? toolsValue : null;
     return consumeDirectChildReopenContext(cwd, {
       sessionId: rootContext.sessionId,
       rootNativeSessionId: rootContext.rootNativeSessionId,
       source: readSessionStartSource(options.payload),
+      availableTools,
     });
   } catch {
     return [
