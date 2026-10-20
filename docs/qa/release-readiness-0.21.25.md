@@ -43,19 +43,17 @@ confirms all six Rust workspace crates resolve to `0.21.25`.
 
 ## Local gates
 
-### Build & typecheck
+### Build
 
 | Gate | Result | Evidence |
 |---|---|---|
-| `npm run build` | ✓ Pass | Production build successful |
-| `npm run typecheck` | ✓ Pass | TypeScript compilation successful |
+| `npm run build` | ✓ Pass | TypeScript compilation and production build successful |
 
 ### Test suite
 
 | Gate | Result | Evidence |
 |---|---|---|
-| `npm test -- src/team/__tests__/state.test.ts` | ✓ Pass | Team state tests pass with new mailbox isolation coverage |
-| `npm run test:rust` | ✓ Pass | Rust test suite passes |
+| `npm test -- src/team/__tests__/state.test.ts` | ✓ Pass | Team state tests pass with new mailbox isolation coverage and concurrency regressions |
 
 ### Verification scripts
 
