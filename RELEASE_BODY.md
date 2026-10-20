@@ -1,26 +1,23 @@
-# oh-my-codex 0.21.24
+# oh-my-codex 0.21.25
 
-`0.21.24` is a patch release for setup plugin-cache repair hardening (9 commits, 5 files, +365/−28; PRs #3851, #3852, #3853, #3854).
+`0.21.25` is a patch release for team mailbox isolation hardening (2 commits, 3 files, +205/−4; PR #3857).
 
 ## Highlights
 
-- **Repair safety hardening (#3851, #3853, #3854):** The setup repair command now enforces stricter requirements on plugin cache removal, preventing false-safe recommendations for live-pinned or unverified caches:
-  1. Mandatory `removalSafe` field validation in dry-run mode, failing closed when safety cannot be verified.
-  2. `removalSafe` derived only from verified managed+unpinned cache eligibility.
-  3. Idempotent dry-run behavior returning `unchanged` for identical caches, matching actual repair behavior. Authored by @Yeachan-Heo.
-
-- **Late-pin scenario test coverage (#3849):** Comprehensive removalSafe field tests validate hardening logic against edge cases in pinned-cache handling. Authored by @Yeachan-Heo.
-
-- **Session state gitignore (#3852):** The .gitignore now excludes gjc runtime session state to reduce noise in untracked-file listings. Authored by @Yeachan-Heo.
+- **Team mailbox isolation hardening (#3857):** The team delivery system now fails closed on unconfirmed mailbox creation, rejecting runtime state, persistence, timeout, and invalid acknowledgement failures instead of publishing a successful JSON-only fallback:
+  1. Fail-closed behavior on creation failure: Runtime rejections, persistence failures, timeouts, and invalid acknowledgements no longer produce a JSON-only mailbox record.
+  2. Partial event reconciliation: Partially persisted creation events are reconciled before assigning another ID, preventing duplicate mailbox IDs within a team scope.
+  3. Deduplication across refresh races: The same verified projection is used across refresh races to prevent concurrent creation races from producing multiple mailboxes for the same request. Authored by @shenyankm with @gaebal-gajae.
 
 ## Compatibility
 
-- `omx setup --plugin --repair-plugin-cache` behavior is unchanged for valid recovery scenarios; only safety validation and edge-case guidance is improved.
-- Existing task records, plugin configurations, and DAG flags remain compatible.
+- Team mailbox creation now fails when runtime confirmation fails; existing integrations must handle creation failures gracefully.
+- Existing delivered mailboxes and team dispatch records remain compatible.
+- The team delivery state contract has been updated to reflect the new fail-closed semantics.
 
 ## Validation
 
-- Pinned candidate `e5370084006560eb76df4c79aeecf50e4a3f90f0` passed latest-per-name dev CI: 17 checks succeeded and 8 conditional checks were skipped, with no failures.
+- Pinned candidate `9aa3e7066291a47d1427ad274ed47e0511712ee7` passed latest-per-name dev CI: 18 checks succeeded and 7 conditional checks were skipped, with no failures.
 - Release branch CI passed with all required checks green.
 - All code review findings addressed.
 
@@ -28,17 +25,13 @@
 
 | PR | Author | Title |
 |---|---|---|
-| [#3851](https://github.com/Yeachan-Heo/oh-my-codex/pull/3851) | @Yeachan-Heo | fix(setup): require removalSafe and fail closed in dry-run repair |
-| [#3852](https://github.com/Yeachan-Heo/oh-my-codex/pull/3852) | @Yeachan-Heo | chore: ignore gjc runtime session state |
-| [#3853](https://github.com/Yeachan-Heo/oh-my-codex/pull/3853) | @Yeachan-Heo | fix(setup): derive removalSafe only from verified repair eligibility |
-| [#3854](https://github.com/Yeachan-Heo/oh-my-codex/pull/3854) | @Yeachan-Heo | fix(setup): keep identical caches unchanged in repair dry-runs |
-| [#3849](https://github.com/Yeachan-Heo/oh-my-codex/pull/3849) | @Yeachan-Heo | test(setup): add comprehensive removalSafe field tests for late-pin scenarios |
+| [#3857](https://github.com/Yeachan-Heo/oh-my-codex/pull/3857) | @shenyankm | fix(team): Fail closed on unconfirmed mailbox creation |
 
 ## Contributors
 
-Thanks to @Yeachan-Heo for the setup repair hardening and test coverage improvements.
+Thanks to @shenyankm for the team mailbox isolation hardening, with collaboration from @gaebal-gajae.
 
-**Full Changelog**: [`v0.21.23...v0.21.24`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.23...v0.21.24)
+**Full Changelog**: [`v0.21.24...v0.21.25`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.24...v0.21.25)
 
 —
 *[repo owner's gaebal-gajae (clawdbot) 🦞]*

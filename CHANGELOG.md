@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.25] - 2026-10-20
+
+Patch release for team mailbox isolation hardening (2 commits, 3 files, +205/−4; PR #3857).
+
+### Fixed
+
+- Fail closed on unconfirmed mailbox creation in team delivery, rejecting runtime state, persistence, timeout, and invalid acknowledgement failures instead of publishing a successful JSON-only mailbox creation. Reconciles partially persisted creation events before assigning another ID and deduplicates against the same verified projection across refresh races (#3857, @shenyankm, @gajae-gajae).
+
+Full inventory, contributors, compatibility notes, and verification: [release notes](docs/release-notes-0.21.25.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.24...v0.21.25
+
 ## [0.21.24] - 2026-10-20
 
 Patch release for setup plugin-cache repair hardening (9 commits, 5 files, +365/−28; PRs #3851, #3852, #3853, #3854).
