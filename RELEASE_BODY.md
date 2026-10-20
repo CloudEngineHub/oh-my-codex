@@ -1,23 +1,25 @@
-# oh-my-codex 0.21.25
+# oh-my-codex 0.21.26
 
-`0.21.25` is a patch release for team mailbox isolation hardening (2 commits, 3 files, +205/−4; PR #3857).
+`0.21.26` is a patch release for team dispatch state isolation and performance improvements (7 commits, 19 files, +722/−269; PRs #3859, #3862, #3863).
 
 ## Highlights
 
-- **Team mailbox isolation hardening (#3857):** The team delivery system now fails closed on unconfirmed mailbox creation, rejecting runtime state, persistence, timeout, and invalid acknowledgement failures instead of publishing a successful JSON-only fallback:
-  1. Fail-closed behavior on creation failure: Runtime rejections, persistence failures, timeouts, and invalid acknowledgements no longer produce a JSON-only mailbox record.
-  2. Partial event reconciliation: Partially persisted creation events are reconciled before assigning another ID, preventing duplicate mailbox IDs within a team scope.
-  3. Deduplication across refresh races: The same verified projection is used across refresh races to prevent concurrent creation races from producing multiple mailboxes for the same request. Authored by @shenyankm with @gaebal-gajae.
+- **Team dispatch state isolation (#3862):** The team dispatch recovery system now isolates degraded observations from authoritative runtime projections, preventing stale state from contaminating recovery paths:
+  1. Fallback request isolation: Fallback requests, retries, and delivery observations are stored in each Team's dispatch directory, preventing TypeScript writers from overwriting shared runtime projections.
+  2. Fresh state on retry: The merged dispatch reader supplements authoritative state only with proven local fallback requests or durable finalization receipts, ensuring recovery does not reinject stale requests.
+  3. Lifecycle preservation: Retry counts and local reasons are preserved after runtime transitions, while authoritative lifecycle timestamps and foreign-Team isolation remain intact. Authored by @shenyankm.
+
+- **Dispatch identity ledger optimization (#3863):** The dispatch identity ledger (`dispatch-seen.json`) is now loaded once per merge instead of per fallback request, reducing file I/O from O(fallbacks) reads to a single read and O(fallbacks) lookups. This improves team mailbox efficiency, especially with high fallback counts. Authored by @Yeachan-Heo.
 
 ## Compatibility
 
-- Team mailbox creation now fails when runtime confirmation fails; existing integrations must handle creation failures gracefully.
-- Existing delivered mailboxes and team dispatch records remain compatible.
-- The team delivery state contract has been updated to reflect the new fail-closed semantics.
+- Team dispatch recovery now uses fresh fallback state instead of stale observations; recovery behavior may differ for edge cases involving runtime bridge failures and local fallbacks.
+- Existing dispatch records and team delivery state remain compatible.
+- The team delivery state contract has been updated to reflect the new state isolation semantics.
 
 ## Validation
 
-- Pinned candidate `9aa3e7066291a47d1427ad274ed47e0511712ee7` passed latest-per-name dev CI: 18 checks succeeded and 7 conditional checks were skipped, with no failures.
+- Pinned candidate `8910439aa4598f1a4e9819b45e11934b0116ab06` passed latest-per-name dev CI: 17 checks succeeded and 8 conditional checks were skipped, with no failures.
 - Release branch CI passed with all required checks green.
 - All code review findings addressed.
 
@@ -25,13 +27,15 @@
 
 | PR | Author | Title |
 |---|---|---|
-| [#3857](https://github.com/Yeachan-Heo/oh-my-codex/pull/3857) | @shenyankm | fix(team): Fail closed on unconfirmed mailbox creation |
+| [#3859](https://github.com/Yeachan-Heo/oh-my-codex/pull/3859) | @dependabot | chore(deps): bump zod from 4.6.5 to 4.6.7 |
+| [#3862](https://github.com/Yeachan-Heo/oh-my-codex/pull/3862) | @shenyankm | fix(team): isolate degraded dispatch state from runtime projections |
+| [#3863](https://github.com/Yeachan-Heo/oh-my-codex/pull/3863) | @Yeachan-Heo | perf(team): load the dispatch identity ledger once per merge |
 
 ## Contributors
 
-Thanks to @shenyankm for the team mailbox isolation hardening, with collaboration from @gaebal-gajae.
+Thanks to @shenyankm for team dispatch state isolation, @Yeachan-Heo for dispatch ledger optimization, and @dependabot for dependency updates.
 
-**Full Changelog**: [`v0.21.24...v0.21.25`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.24...v0.21.25)
+**Full Changelog**: [`v0.21.25...v0.21.26`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.25...v0.21.26)
 
 —
 *[repo owner's gaebal-gajae (clawdbot) 🦞]*
