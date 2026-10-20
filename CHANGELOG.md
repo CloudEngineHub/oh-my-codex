@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.26] - 2026-10-20
+
+Patch release for team dispatch state isolation and dependency updates (6 commits, 19 files, +722/−269; PRs #3859, #3862, #3863).
+
+### Fixed
+
+- Isolate degraded dispatch state from runtime projections in team delivery, preventing stale state from contaminating recovery paths and ensuring fresh ledger reads across retries (#3862, @shenyankm).
+
+### Performance
+
+- Load the dispatch identity ledger once per merge instead of per recovery attempt, reducing redundant reads and improving team mailbox efficiency (#3863, @Yeachan-Heo).
+
+### Maintenance
+
+- Bump zod from 4.6.5 to 4.6.7 for dependency currency (#3859, @dependabot).
+
+Full inventory, contributors, compatibility notes, and verification: [release notes](docs/release-notes-0.21.26.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.25...v0.21.26
+
 ## [0.21.25] - 2026-10-20
 
 Patch release for team mailbox isolation hardening (2 commits, 3 files, +205/−4; PR #3857).
