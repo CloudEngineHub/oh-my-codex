@@ -1,6 +1,6 @@
 # oh-my-codex 0.21.26
 
-`0.21.26` is a patch release for team dispatch state isolation and performance improvements (6 commits, 19 files, +722/−269; PRs #3859, #3862, #3863).
+`0.21.26` is a patch release for team dispatch state isolation and performance improvements (7 commits, 19 files, +722/−269; PRs #3859, #3862, #3863).
 
 ## Highlights
 

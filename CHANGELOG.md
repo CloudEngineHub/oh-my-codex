@@ -6,7 +6,7 @@ All notable changes to this project are documented in this file.
 
 ## [0.21.26] - 2026-10-20
 
-Patch release for team dispatch state isolation and dependency updates (6 commits, 19 files, +722/−269; PRs #3859, #3862, #3863).
+Patch release for team dispatch state isolation and dependency updates (7 commits, 19 files, +722/−269; PRs #3859, #3862, #3863).
 
 ### Fixed
 
