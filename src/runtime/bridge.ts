@@ -221,7 +221,7 @@ export function resolveBridgeStateDir(cwd: string, env: NodeJS.ProcessEnv = proc
   return resolveCanonicalTeamStateRoot(cwd, env);
 }
 
-function isStrictDispatchRecord(record: unknown): record is DispatchRecord {
+export function isStrictDispatchRecord(record: unknown): record is DispatchRecord {
   if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
   const value = record as Record<string, unknown>;
   const requiredFields = [
@@ -229,8 +229,14 @@ function isStrictDispatchRecord(record: unknown): record is DispatchRecord {
     'delivered_at', 'failed_at', 'reason', 'metadata',
   ];
   if (requiredFields.some((field) => !Object.prototype.hasOwnProperty.call(value, field))) return false;
-  return typeof value.request_id === 'string'
-    && typeof value.target === 'string'
+  const requestId = value.request_id as string;
+  const target = value.target as string;
+  return typeof requestId === 'string'
+    && requestId.trim().length > 0
+    && requestId === requestId.trim()
+    && typeof target === 'string'
+    && target.trim().length > 0
+    && target === target.trim()
     && ['pending', 'notified', 'delivered', 'failed'].includes(String(value.status))
     && typeof value.created_at === 'string'
     && (value.notified_at === null || typeof value.notified_at === 'string')
