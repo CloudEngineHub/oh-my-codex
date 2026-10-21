@@ -1,27 +1,20 @@
-# oh-my-codex 0.21.27
+# oh-my-codex 0.21.28
 
-`0.21.27` is a patch release for subagents tri-state resume_agent availability (3 commits, 10 files, +317/−30; PRs #3867, #3868).
+`0.21.28` is a patch release for JetBrains terminal trackpad scrolling diagnostic (1 commit, 3 files, +167/−0; PR #3873).
 
 ## Highlights
 
-- **SessionStart reopen guidance for hosts without resume_agent (#3867):** The subagent recovery system now covers hosts that do not support the `resume_agent` tool, providing accurate fallback instructions instead of treating absence as unknown availability. SessionStart recovery guidance now correctly identifies unsupported hosts and recommends appropriate fallback actions.
-
-- **Tri-state resume_agent availability tracking (#3868):** The subagents contract now implements tri-state availability (available / absent / unknown) for the `resume_agent` tool, enabling recovery guidance to distinguish between:
-  1. Available: The tool is present and usable for session recovery.
-  2. Absent: The host environment does not support the tool; fallback guidance applies.
-  3. Unknown: The tool availability has not yet been determined; conservative recovery behavior applies.
-  
-  This tri-state model is now wired through the native hook contract and the subagents tracker, enabling accurate recovery path selection based on host capabilities. Addresses issue #3866 (reported by ev78394).
+- **JetBrains trackpad scrolling diagnostic (#3873):** On macOS WebStorm and other JetBrains IDE terminals, trackpad scrolling is translated to Up/Down arrow keys by the terminal emulator. When alternate screen mode is enabled, this causes the input field to be populated with previous prompts instead of scrolling the output. This release adds a startup diagnostic that detects JetBrains terminal environments and suggests the `omx --no-alt-screen` workaround to users on direct (non-tmux) and hotswap launches. The diagnostic is only emitted if `--no-alt-screen` is not already specified. Detection works by checking `TERM_PROGRAM` and `TERMINAL_EMULATOR` environment variables for JetBrains IDE indicators. Fixes #3872 (reported by @BohdanLavrinenko).
 
 ## Compatibility
 
-- SessionStart recovery guidance behavior changes for hosts without `resume_agent`; recovery now emits appropriate fallback instructions instead of treating absence as unknown.
-- Existing subagent sessions and recovery state remain compatible.
-- No breaking API changes; tri-state availability is an internal contract refinement.
+- The diagnostic is informational only; no behavior changes affect existing workflows.
+- No breaking API changes; new diagnostic message is a pure UX improvement.
+- Existing sessions remain unaffected.
 
 ## Validation
 
-- Pinned candidate `b58737f0f1eb427b978cb5561672625144616f29` passed latest-per-name dev CI: 17 checks succeeded and 8 conditional checks were skipped, with no failures.
+- Pinned candidate `60ae8e90090f41bb52487c13cc3152c1baf05428` passed latest-per-name dev CI: 17 checks succeeded and 8 conditional checks were skipped, with no failures.
 - Release branch CI passed with all required checks green.
 - All code review findings addressed.
 
@@ -29,14 +22,13 @@
 
 | PR | Author | Title |
 |---|---|---|
-| [#3867](https://github.com/Yeachan-Heo/oh-my-codex/pull/3867) | @Yeachan-Heo | fix(subagents): cover hosts without resume_agent in SessionStart reopen guidance |
-| [#3868](https://github.com/Yeachan-Heo/oh-my-codex/pull/3868) | @Yeachan-Heo | fix(subagents): implement tri-state resume_agent availability (#3866 follow-up) |
+| [#3873](https://github.com/Yeachan-Heo/oh-my-codex/pull/3873) | @Yeachan-Heo | fix(cli): emit diagnostic for JetBrains trackpad scrolling issue (Fixes #3872) |
 
 ## Contributors
 
-Thanks to @Yeachan-Heo for subagent recovery hardening and tri-state availability implementation, addressing issue #3866 (reported by ev78394).
+Thanks to @Yeachan-Heo for the JetBrains terminal diagnostic. Credit to @BohdanLavrinenko for reporting issue #3872.
 
-**Full Changelog**: [`v0.21.26...v0.21.27`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.26...v0.21.27)
+**Full Changelog**: [`v0.21.27...v0.21.28`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.27...v0.21.28)
 
 —
 *[repo owner's gaebal-gajae (clawdbot) 🦞]*
