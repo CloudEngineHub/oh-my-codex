@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.28] - 2026-10-21
+
+Patch release for JetBrains terminal trackpad scrolling diagnostic (1 commit, 3 files, +167/−0; PR #3873).
+
+### Fixed
+
+- Emit startup diagnostic naming the `omx --no-alt-screen` workaround for JetBrains terminals, where trackpad scrolling causes the input field to be populated with previous prompts instead of scrolling output. The diagnostic now covers both direct (non-tmux) launches and hotswap launches (#3873, fixes #3872; credit @BohdanLavrinenko for the report).
+
+Full inventory, contributors, compatibility notes, and verification: [release notes](docs/release-notes-0.21.28.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.27...v0.21.28
+
 ## [0.21.27] - 2026-10-21
 
 Patch release for subagents tri-state resume_agent availability (3 commits, 10 files, +317/−30; PRs #3867, #3868).
