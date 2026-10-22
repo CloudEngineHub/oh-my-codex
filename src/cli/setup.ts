@@ -1993,6 +1993,24 @@ async function cleanupNativeHookTransactionStagedDeletions(
 	}
 }
 
+/**
+ * Sanitize an absolute path to be a valid relative path component for backups.
+ * Handles Windows paths by removing drive letters, colons, and backslashes.
+ * On Windows: C:\custom-codex\config.toml -> custom-codex_config.toml
+ * On Unix: /custom-codex/config.toml -> custom-codex_config.toml
+ */
+function sanitizePathForBackup(absPath: string): string {
+	// Remove leading slashes and backslashes
+	let sanitized = absPath.replace(/^[\\/]+/, "");
+	// Remove Windows drive letters (e.g., "C:" -> "")
+	sanitized = sanitized.replace(/^[A-Za-z]:/, "");
+	// Remove any remaining backslashes and colons, replacing with underscores
+	sanitized = sanitized.replace(/[\\/\\:]/g, "_");
+	// Collapse multiple underscores
+	sanitized = sanitized.replace(/_+/g, "_");
+	return sanitized;
+}
+
 function nativeHookTransactionBackupPath(
 	artifactPath: string,
 	backupContext: SetupBackupContext,
@@ -2000,7 +2018,7 @@ function nativeHookTransactionBackupPath(
 	const relativePath = relative(backupContext.baseRoot, artifactPath);
 	const safeRelativePath =
 		relativePath.startsWith("..") || relativePath === ""
-			? artifactPath.replace(/^[/]+/, "")
+			? sanitizePathForBackup(artifactPath)
 			: relativePath;
 	return join(backupContext.backupRoot, safeRelativePath);
 }
@@ -2398,7 +2416,7 @@ async function ensureBackup(
 	const relativePath = relative(backupContext.baseRoot, destinationPath);
 	const safeRelativePath =
 		relativePath.startsWith("..") || relativePath === ""
-			? destinationPath.replace(/^[/]+/, "")
+			? sanitizePathForBackup(destinationPath)
 			: relativePath;
 	const backupPath = join(backupContext.backupRoot, safeRelativePath);
 
