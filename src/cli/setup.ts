@@ -492,13 +492,14 @@ function getBackupContext(
 			baseRoot: projectRoot,
 		};
 	}
-	// For user scope, use CODEX_HOME as the managed authority root, not the user's home directory.
-	// This ensures that all user-scope managed files (including .omx state) are validated and
-	// confined within the configured CODEX_HOME, which may differ from the home directory.
-	const codexHomeDir = codexHome();
+	// For user scope, keep backups under ~/.omx/backups (not under CODEX_HOME).
+	// The baseRoot is used for validation scope determination per destination:
+	// - Destinations under CODEX_HOME are validated against CODEX_HOME
+	// - Destinations under ~/.omx are validated against homedir() (or OMX_ROOT if set)
+	const homeDir = homedir();
 	return {
-		backupRoot: join(codexHomeDir, ".omx", "backups", "setup", timestamp),
-		baseRoot: codexHomeDir,
+		backupRoot: join(homeDir, ".omx", "backups", "setup", timestamp),
+		baseRoot: homeDir,
 	};
 }
 
@@ -2324,13 +2325,30 @@ async function assertManagedDestination(
 	}
 }
 
+/**
+ * Determine the validation scope root for a destination based on its location.
+ * Destinations under CODEX_HOME validate against CODEX_HOME;
+ * other paths (like ~/.omx, ~/.claude) validate against the user's home.
+ */
+function getValidationScopeRoot(destinationPath: string): string {
+	const absPath = isAbsolute(destinationPath) ? destinationPath : join(process.cwd(), destinationPath);
+	const codexHomeDir = codexHome();
+	// Check if the destination is under CODEX_HOME
+	if (absPath.startsWith(codexHomeDir + sep) || absPath === codexHomeDir) {
+		return codexHomeDir;
+	}
+	// Otherwise, it's validated against the home directory
+	return homedir();
+}
+
 async function ensureBackup(
 	destinationPath: string,
 	contentChanged: boolean,
 	backupContext: SetupBackupContext,
 	options: Pick<SetupOptions, "dryRun" | "verbose">,
 ): Promise<boolean> {
-	await assertManagedDestination(destinationPath, backupContext.baseRoot);
+	const scopeRoot = getValidationScopeRoot(destinationPath);
+	await assertManagedDestination(destinationPath, scopeRoot);
 	if (!contentChanged || !existsSync(destinationPath)) return false;
 
 	const relativePath = relative(backupContext.baseRoot, destinationPath);
@@ -2341,7 +2359,8 @@ async function ensureBackup(
 	const backupPath = join(backupContext.backupRoot, safeRelativePath);
 
 	if (!options.dryRun) {
-		await assertManagedDestination(backupPath, backupContext.baseRoot);
+		const backupScopeRoot = getValidationScopeRoot(backupPath);
+		await assertManagedDestination(backupPath, backupScopeRoot);
 		await mkdir(dirname(backupPath), { recursive: true });
 		await copyFile(destinationPath, backupPath);
 	}
@@ -4640,10 +4659,12 @@ export async function setup(options: SetupOptions = {}): Promise<void> {
 		: [scopeDirs.codexHomeDir, scopeDirs.promptsDir, scopeDirs.skillsDir, scopeDirs.nativeAgentsDir];
 	const projectScopeDirs = [omxStateDir(projectRoot), omxPlansDir(projectRoot), omxLogsDir(projectRoot)];
 
-	// Validate and create user-scope directories against user authority root
+	// Validate and create user-scope directories against appropriate authority root
+	// (CODEX_HOME for files under CODEX_HOME, homedir() for ~/.omx and other paths)
 	for (const dir of userScopeDirs) {
 		if (!dryRun) {
-			await assertManagedDestination(dir, backupContext.baseRoot);
+			const dirScopeRoot = getValidationScopeRoot(dir);
+			await assertManagedDestination(dir, dirScopeRoot);
 			await mkdir(dir, { recursive: true });
 		}
 		if (verbose) console.log(`  mkdir ${dir}`);
@@ -5537,7 +5558,8 @@ async function syncManagedFileFromDisk(
 	options: Pick<SetupOptions, "dryRun" | "verbose">,
 	verboseLabel: string,
 ): Promise<void> {
-	await assertManagedDestination(dstPath, backupContext.baseRoot);
+	const dstScopeRoot = getValidationScopeRoot(dstPath);
+	await assertManagedDestination(dstPath, dstScopeRoot);
 	const destinationExists = existsSync(dstPath);
 	const changed = !destinationExists || (await filesDiffer(srcPath, dstPath));
 
@@ -5571,7 +5593,8 @@ async function syncManagedContent(
 	options: Pick<SetupOptions, "dryRun" | "verbose">,
 	verboseLabel: string,
 ): Promise<void> {
-	await assertManagedDestination(dstPath, backupContext.baseRoot);
+	const dstScopeRoot = getValidationScopeRoot(dstPath);
+	await assertManagedDestination(dstPath, dstScopeRoot);
 	const destinationExists = existsSync(dstPath);
 	let changed = true;
 	if (destinationExists) {
@@ -5685,7 +5708,8 @@ async function syncNativeAgentToml(
 ): Promise<void> {
 	const fileName = basename(dstPath);
 	const nextHash = hashContent(content);
-	await assertManagedDestination(dstPath, backupContext.baseRoot);
+	const dstScopeRoot = getValidationScopeRoot(dstPath);
+	await assertManagedDestination(dstPath, dstScopeRoot);
 	const destinationExists = existsSync(dstPath);
 
 	if (!destinationExists) {
@@ -5984,7 +6008,8 @@ async function refreshNativeAgentConfigs(
 	const summary = createEmptyCategorySummary();
 
 	if (!options.dryRun) {
-		await assertManagedDestination(agentsDir, backupContext.baseRoot);
+		const agentsDirScopeRoot = getValidationScopeRoot(agentsDir);
+		await assertManagedDestination(agentsDir, agentsDirScopeRoot);
 		await mkdir(agentsDir, { recursive: true });
 	}
 
@@ -6095,7 +6120,8 @@ async function refreshNativeAgentConfigs(
 	}
 
 	if (!options.dryRun) {
-		await writeNativeAgentInstallManifest(agentsDir, nativeAgentManifest, backupContext.baseRoot);
+		const manifestScopeRoot = getValidationScopeRoot(join(agentsDir, "..", ".omx", "native-agents.json"));
+		await writeNativeAgentInstallManifest(agentsDir, nativeAgentManifest, manifestScopeRoot);
 	}
 
 	return summary;
@@ -6167,7 +6193,8 @@ export async function installSkills(
 	if (!existsSync(srcDir)) return summary;
 	// Validate the skills directory before creating any skill subdirectories
 	if (!options.dryRun) {
-		await assertManagedDestination(dstDir, backupContext.baseRoot);
+		const dstDirScopeRoot = getValidationScopeRoot(dstDir);
+		await assertManagedDestination(dstDir, dstDirScopeRoot);
 	}
 	const installableSkillNames = getSetupInstallableSkillNames();
 	const installableSkills: Array<{
@@ -6237,7 +6264,8 @@ export async function installSkills(
 		const skillDst = skill.destinationDir;
 
 		if (!options.dryRun) {
-			await assertManagedDestination(skillDst, backupContext.baseRoot);
+			const skillDstScopeRoot = getValidationScopeRoot(skillDst);
+			await assertManagedDestination(skillDst, skillDstScopeRoot);
 			await mkdir(skillDst, { recursive: true });
 		}
 
@@ -6279,7 +6307,8 @@ export async function installSkills(
 	// Without an authority path, refuse to create a receipt rather than placing deletion authority
 	// in the user-writable skills directory.
 	if (options.skillReceiptPath) {
-		await writeInstalledSkillReceipt(options.skillReceiptPath, dstDir, writtenFilesBySkill, options, backupContext.baseRoot);
+		const receiptScopeRoot = getValidationScopeRoot(options.skillReceiptPath);
+		await writeInstalledSkillReceipt(options.skillReceiptPath, dstDir, writtenFilesBySkill, options, receiptScopeRoot);
 	}
 
 	if (manifest && existsSync(dstDir)) {
@@ -6341,7 +6370,9 @@ async function removeDirectoryCopyAware(
 	const destinationExists = existsSync(sourceDir);
 	if (!destinationExists) return false;
 
-	const relativePath = relative(backupContext.baseRoot, sourceDir);
+	// Determine the scope root based on source directory location
+	const scopeRoot = getValidationScopeRoot(sourceDir);
+	const relativePath = relative(scopeRoot, sourceDir);
 	const safeRelativePath =
 		relativePath.startsWith("..") || relativePath === ""
 			? sourceDir.replace(/^[/]+/, "")
