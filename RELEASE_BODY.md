@@ -17,6 +17,10 @@
 - Existing sessions and dispatch workflows remain unaffected; recovery is transparent.
 - Codex startup and folder-trust workflows are now more robust against concurrent notifications.
 
+## Known gap
+
+- **Monitor-path dispatch serialization (deferred to v0.21.30):** This release fixes dispatch state recovery for the primary dispatch retry path (projection durability, mailbox wake acknowledgment, damaged mailbox handling). A secondary code path (`monitorTeam` → `deliverPendingMailboxMessages` → `dispatchPendingMailboxMessage`) also enqueues dispatch requests but does not yet participate in the same serialization barrier for wake acknowledgments. This will be addressed in a follow-up patch release to ensure complete delivery consistency across all mailbox-enqueue paths.
+
 ## Validation
 
 - Pinned candidate `71029cdfc80946da1e0b6770d47e31aae38cf5ab` passed latest-per-name dev CI: 17 checks succeeded and 8 conditional checks were skipped, with no failures (run #39737386059, concluded 07:19Z).
