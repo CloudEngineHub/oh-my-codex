@@ -2190,14 +2190,17 @@ async function commitNativeHookTransaction(
 /**
  * A symlinked destination or any ancestor in the path would redirect reads, backups and writes
  * outside the managed tree, so refuse before touching it. Validates every path component
- * without following symlinks, not just the leaf destination.
+ * without following symlinks, ensuring no component in the path is a symlink.
  */
 async function assertNoSymlinkDestination(destinationPath: string): Promise<void> {
-	// Check each component of the path from the destination up to the root
-	let currentPath = destinationPath;
+	// Resolve the destination to an absolute path
+	const absolutePath = isAbsolute(destinationPath) ? destinationPath : join(process.cwd(), destinationPath);
+	
+	// Walk from the destination up to the root, checking each component
+	let currentPath = absolutePath;
 	const visited = new Set<string>();
 	
-	while (currentPath && currentPath !== '/' && currentPath !== '.') {
+	while (currentPath && currentPath !== '/' && currentPath !== dirname(currentPath)) {
 		if (visited.has(currentPath)) break; // Avoid infinite loops
 		visited.add(currentPath);
 		
@@ -2221,9 +2224,7 @@ async function assertNoSymlinkDestination(destinationPath: string): Promise<void
 			throw new Error(msg);
 		}
 		
-		const parentPath = dirname(currentPath);
-		if (parentPath === currentPath) break; // Reached root or filesystem boundary
-		currentPath = parentPath;
+		currentPath = dirname(currentPath);
 	}
 }
 
@@ -2521,8 +2522,12 @@ async function writeInstalledSkillReceipt(
     await mkdir(dirname(receiptPath), { recursive: true });
     await assertNoSymlinkDestination(receiptPath);
     await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
-  } catch {
-    // A receipt we cannot persist simply means the next refresh retains conservatively.
+  } catch (error) {
+    // Symlink assertions must propagate to prevent writes through symlinks
+    if (error instanceof Error && error.message.includes('Refusing to install through symlink')) {
+      throw error;
+    }
+    // A receipt we cannot persist for other reasons simply means the next refresh retains conservatively.
   }
 }
 
