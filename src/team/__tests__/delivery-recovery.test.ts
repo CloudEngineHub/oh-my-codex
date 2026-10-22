@@ -477,7 +477,8 @@ it('does not mark message notified when dispatch snapshot is corrupted during fi
   
   // Disable the runtime bridge to ensure there's no authoritative fallback.
   // This forces readDispatchRequests to rely on the local shadow, so corruption causes real failure.
-  process.env.OMX_RUNTIME_BRIDGE = '';
+  // Set to '0' (the recognized disabled value) since isBridgeEnabled() returns true for all other values.
+  process.env.OMX_RUNTIME_BRIDGE = '0';
   t.after(() => {
     delete process.env.OMX_RUNTIME_BRIDGE;
   });

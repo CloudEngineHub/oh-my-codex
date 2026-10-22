@@ -2124,7 +2124,12 @@ export async function readDispatchRequests(
     if (localReadError) throw localReadError;
     return local;
   }
-  const records = authoritativeRecords ?? getDefaultBridge(stateDir).readCompatFile<{ records?: DispatchRecord[] }>('dispatch.json')?.records;
+  const compat = authoritativeRecords !== undefined ? { records: authoritativeRecords } : getDefaultBridge(stateDir).readCompatFile<{ records?: DispatchRecord[] }>('dispatch.json');
+  if (compat === null && localReadError) {
+    // Unable to read authoritative dispatch records and local read also failed; propagate as retryable.
+    throw localReadError;
+  }
+  const records = compat?.records;
   const authoritative = (Array.isArray(records) && records.every(isStrictDispatchRecord) ? records : [])
     .map((record) => normalizeBridgeDispatchRecord(teamName, record, nowIso))
     .filter((entry): entry is TeamDispatchRequest => entry !== null);
