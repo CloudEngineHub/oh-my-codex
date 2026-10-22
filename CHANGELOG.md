@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.30] - 2026-10-22
+
+Patch release for Team monitor-path dispatch serialization (4 commits, 10 files, +324/−78; PRs #3879, #3880, #3882).
+
+### Fixed
+
+- Extend monitor-path dispatch serialization to serialize wake acknowledgments, preventing premature wake closure in the monitor delivery path (#3879, @shenyankm).
+- Fix race condition in monitor mailbox delivery where acknowledgements can race with dispatch requests, leaving messages undelivered (#3880, @shenyankm).
+- Detect and skip stale monitor notifications after acknowledgement, proving the race condition is resolved across both primary and monitor paths (#3882, @shenyankm).
+
+Full inventory, contributors, compatibility notes, and verification: [release notes](docs/release-notes-0.21.30.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.29...v0.21.30
+
 ## [0.21.29] - 2026-10-22
 
 Patch release for Team dispatch state recovery and Codex startup UI protection (1 commit, 16 files, +616/−68; PR #3876).
