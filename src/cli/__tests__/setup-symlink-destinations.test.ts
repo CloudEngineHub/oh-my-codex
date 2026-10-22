@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setup } from '../setup.js';
@@ -153,6 +154,30 @@ describe('omx setup symlink destinations', () => {
         },
       );
       assert.equal(await readFile(victim, 'utf8'), '{"secret": true}\n');
+    });
+  });
+
+  it('succeeds when scope root is under a symlinked parent (like /tmp on macOS) while still rejecting symlinks inside the managed tree', async () => {
+    // Regression test for issue #3887: On macOS, /tmp is a symlink to /private/tmp,
+    // so the setup should not reject paths just because they're under /tmp,
+    // but should still reject symlinks inside the managed scope (.codex, .omx, etc).
+    await withRepo(async (repo, parent) => {
+      // The repo is already under /tmp (symlinked parent), so this tests that
+      // OS-level symlinks are not rejected.
+      // Create a file to install
+      const skillDir = join(repo, '.codex', 'skills', 'test-skill');
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(join(skillDir, 'SKILL.md'), '# Test Skill\n\nA test skill');
+      
+      // Setup should succeed even though the scope root is under the /tmp symlink
+      await assert.doesNotReject(
+        setup({ scope: 'project' }),
+        'Setup should succeed when scope root is under /tmp (symlinked OS directory)'
+      );
+      
+      // Verify the setup actually completed
+      assert(existsSync(join(repo, '.gitignore')), '.gitignore should be created');
+      assert(existsSync(join(repo, '.codex', 'config.toml')), 'config.toml should be created');
     });
   });
 });
