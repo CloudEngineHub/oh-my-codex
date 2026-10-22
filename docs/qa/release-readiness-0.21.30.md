@@ -86,7 +86,11 @@ Verified at 12:17Z on 2026-10-22
 
 ## Known gaps
 
-None. All monitor-path dispatch serialization findings from v0.21.29 are now resolved.
+**Codex findings (tracked for v0.21.31 follow-up):**
+- **P1: Do not treat dispatch-read failures as acknowledgements** - When `readDispatchRequest` fails in `finalizeDispatchedMailboxMessage`, the current code treats the read failure the same as a successful delivery. This should distinguish between read errors (return retryable failure) and actual delivery success. Impact: read failures could prevent message re-enqueuing. Fix tracked for immediate follow-up patch.
+- **P2: Run the race hook after mailbox discovery** - The test hook currently runs before discovery rather than between Phase 1 (discovery) and Phase 1.5 (re-validation). This affects test coverage quality but does not affect the core race condition fix, which is validated by stale notification detection (#3882). Fix tracked for immediate follow-up patch.
+
+Both findings are acknowledged and will be addressed in v0.21.31.
 
 ## Validation checklist
 
