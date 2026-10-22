@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.31] - 2026-10-22
+
+Patch release for setup symlink safety (2 commits, 7 files, +120/−11; PR #3881).
+
+### Fixed
+
+- Refuse symlinked managed destinations in `omx setup`, preventing unintended writes outside the repository when a committed `.gitignore` or prompt path is a symlink (#3881, @shenyankm).
+
+Full inventory, contributors, compatibility notes, and verification: [release notes](docs/release-notes-0.21.31.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.30...v0.21.31
+
 ## [0.21.30] - 2026-10-22
 
 Patch release for Team monitor-path dispatch serialization (4 commits, 10 files, +324/−78; PRs #3879, #3880, #3882).
