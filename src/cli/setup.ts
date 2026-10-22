@@ -2262,18 +2262,63 @@ async function canonicalizePathToRealForm(absolutePath: string): Promise<string>
 }
 
 /**
+ * Try to find an alternative symlinked path that resolves to the canonical path.
+ * Used for error messages to show symlinked paths when possible.
+ */
+async function findSymlinkedAlternativePath(canonicalPath: string): Promise<string | null> {
+	try {
+		const parts = canonicalPath.split(sep).filter(Boolean);
+		if (parts.length < 2) return null;
+		
+		// Walk up the canonical path, checking each ancestor for symlinks
+		for (let i = 1; i < parts.length; i++) {
+			const canonicalPrefix = sep + parts.slice(0, i).join(sep);
+			const suffix = parts.slice(i).join(sep);
+			
+			try {
+				const parentDir = dirname(canonicalPrefix);
+				const baseName = basename(canonicalPrefix);
+				
+				// Check if there's a symlink with the same name at the same level
+				try {
+					const symlinkPath = join(parentDir, baseName);
+					const stat = await lstat(symlinkPath);
+					if (stat.isSymbolicLink()) {
+						// Verify it points to the right place
+						const target = await canonicalizePathToRealForm(symlinkPath);
+						if (target === canonicalPrefix) {
+							return join(symlinkPath, suffix);
+						}
+					}
+				} catch {
+					// Continue if this check fails
+				}
+			} catch {
+				// Continue searching
+			}
+		}
+	} catch {
+		// If anything goes wrong, return null and use the canonical path
+	}
+	return null;
+}
+
+/**
  * Validates that a destination path is safe for managed setup operations (install, read, compare).
  * Refuses if the destination is a symlink or lies outside the specified scope root,
  * or if any ancestor component within the scope is a symlink.
  *
  * This guard prevents symlink attacks that would redirect reads, backups, and writes outside
- * the managed tree. Separates two concerns:
- * 1. CONTAINMENT: Uses realpath (follows symlinks) to detect OS-level symlinks and verify
- *    destination is within scope, handling cases like /tmp -> /private/tmp on macOS.
- * 2. SYMLINK GUARD: Uses lstat to reject if any path component strictly BELOW the scope root
- *    is itself a symlink, preventing symlink attacks within the managed scope.
+ * the managed tree. Uses a single algorithm that:
+ * 1. Canonicalizes the scope root via deepest-existing-ancestor realpath (follows ALL symlinks)
+ * 2. Walks prefixes of the LEXICAL absolute destination from shortest to longest
+ * 3. Finds the FIRST prefix P whose deepest-existing-ancestor canonical form equals canonicalScope
+ * 4. For each lexical component after P down to destination, lstat it:
+ *    - symlink (including dangling) → throw error
+ *    - ENOENT → stop (rest is missing, fine)
  *
- * Never rejects OS-level symlinks above the managed scope (e.g., /var, /tmp on macOS).
+ * This handles cases like /tmp -> /private/tmp on macOS where scopeRoot and destination
+ * may be in different lexical forms but resolve to the same canonical path.
  *
  * MUST be called BEFORE reading/comparing contents and BEFORE mkdir of any intermediate dir.
  * It is the single authoritative source of symlink validation for all managed scope writes.
@@ -2295,56 +2340,82 @@ async function assertManagedDestination(
 	const absolutePath = isAbsolute(destinationPath) ? destinationPath : join(process.cwd(), destinationPath);
 	const absoluteScopeRoot = isAbsolute(scopeRoot) ? scopeRoot : join(process.cwd(), scopeRoot);
 	
-	// SYMLINK GUARD (check first): Reject if any path component strictly BELOW the scope root is a symlink.
-	// Walk the LEXICAL path components from relative(scopeRoot, dest) to detect symlinks within scope.
-	// Use relative path in error messages to avoid canonicalization issues with symlinked directories.
-	const relativePathFromScope = relative(absoluteScopeRoot, absolutePath);
-	if (relativePathFromScope && relativePathFromScope !== '.') {
-		// Split into components and walk from scope root down to destination
-		const pathComponents = relativePathFromScope.split(sep);
-		let currentCheckPath = absoluteScopeRoot;
+	// Step 1: Canonicalize the scope root via deepest-existing-ancestor realpath.
+	const canonicalScope = await canonicalizePathToRealForm(absoluteScopeRoot);
+	
+	// Step 2 & 3: Walk lexical prefixes of destination to find the matching scope point.
+	// Build the list of prefixes from root downward.
+	const prefixes: string[] = [];
+	let currentPrefix = absolutePath;
+	while (true) {
+		prefixes.unshift(currentPrefix);
+		if (currentPrefix === sep) break;
+		const parent = dirname(currentPrefix);
+		if (parent === currentPrefix) {
+			// Shouldn't happen, but break to avoid infinite loop
+			break;
+		}
+		currentPrefix = parent;
+	}
+	
+	let matchingPrefixPath = '';
+	for (const prefix of prefixes) {
+		const canonicalPrefix = await canonicalizePathToRealForm(prefix);
+		if (canonicalPrefix === canonicalScope) {
+			matchingPrefixPath = prefix;
+			break;
+		}
+	}
+	
+	if (!matchingPrefixPath) {
+		// No prefix matched the scope; destination is outside managed scope
+		throw new Error(
+			`Destination ${absolutePath} is outside managed scope ${absoluteScopeRoot}.`,
+		);
+	}
+	
+	// Step 4: For each component lexically after the matching prefix, check with lstat.
+	// Extract the remaining path components after the matching prefix.
+	let current = matchingPrefixPath;
+	const remaining = relative(current, absolutePath);
+	
+	if (remaining && remaining !== '.') {
+		const remainingComponents = remaining.split(sep);
+		let currentForDisplay = matchingPrefixPath;
 		
-		for (const component of pathComponents) {
-			currentCheckPath = join(currentCheckPath, component);
+		for (const component of remainingComponents) {
+			current = join(current, component);
+			currentForDisplay = join(currentForDisplay, component);
 			
 			try {
-				const stats = await lstat(currentCheckPath);
+				const stats = await lstat(current);
 				if (stats.isSymbolicLink()) {
-					// Report the symlink path relative to scopeRoot for clarity and to avoid canonicalization issues.
-					// This allows the error message to match user-facing paths, especially when working in symlinked directories.
-					const relPathToSymlink = relative(absoluteScopeRoot, currentCheckPath);
-					const symlinkedPath = join(scopeRoot, relPathToSymlink);
+					// Try to find a symlinked alternative path for the error message
+					let displayPath = current;
+					const altPath = await findSymlinkedAlternativePath(current);
+					if (altPath) {
+						displayPath = altPath;
+					}
+					
 					const msg =
-						`Refusing to install through symlink ${symlinkedPath}. ` +
-						`Either remove the symlink (rm ${symlinkedPath}), ` +
+						`Refusing to install through symlink ${displayPath}. ` +
+						`Either remove the symlink (rm ${displayPath}), ` +
 						`or move the target to the expected location before running setup again.`;
 					throw new Error(msg);
 				}
 			} catch (error) {
 				// If component doesn't exist yet, that's fine; we'll create it during mkdir
-				// Just make sure we're not getting a different error
-				if (!isMissingPathError(error)) {
-					// Re-throw symlink errors and other unexpected errors
-					if (error instanceof Error && error.message.includes('Refusing to install through symlink')) {
-						throw error;
-					}
+				if (isMissingPathError(error)) {
+					// Stop checking further components; rest of path is missing
+					break;
+				}
+				// Re-throw symlink errors and other unexpected errors
+				if (error instanceof Error && error.message.includes('Refusing to install through symlink')) {
 					throw error;
 				}
+				throw error;
 			}
 		}
-	}
-	
-	// CONTAINMENT CHECK: Canonicalize both paths using realpath (follows symlinks)
-	// to handle OS-level symlinks like /tmp -> /private/tmp on macOS.
-	const canonicalDestPath = await canonicalizePathToRealForm(absolutePath);
-	const canonicalScopeRoot = await canonicalizePathToRealForm(absoluteScopeRoot);
-	
-	// Verify destination is within the managed scope
-	const relFromScope = relative(canonicalScopeRoot, canonicalDestPath);
-	if (relFromScope === '..' || relFromScope.startsWith(`..${sep}`)) {
-		throw new Error(
-			`Destination ${absolutePath} is outside managed scope ${canonicalScopeRoot}.`,
-		);
 	}
 }
 
