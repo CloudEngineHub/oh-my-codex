@@ -458,4 +458,47 @@ describe('omx setup symlink destinations', () => {
       await rm(wd, { recursive: true, force: true });
     }
   });
+
+  it('handles symlinked HOME directory for scope validation (regression test for macOS /var symlink)', async () => {
+    // Regression test for the /var -> /private/var issue on macOS, which can also occur when
+    // HOME itself is accessed through a symlink. Create a symlinked home to test canonicalization.
+    const root = await mkdtemp(join(tmpdir(), 'omx-setup-symlinked-home-'));
+    const realHome = join(root, 'real-home');
+    const symlinkHome = join(root, 'symlinked-home');
+    const repo = join(symlinkHome, 'repo');
+
+    await mkdir(realHome);
+    await mkdir(join(realHome, 'repo'));
+    // Create a symlink to the real home directory
+    await symlink(realHome, symlinkHome);
+
+    const previousHome = process.env.HOME;
+    const previousCodexHome = process.env.CODEX_HOME;
+    const previousCwd = process.cwd();
+
+    try {
+      // Set HOME to the symlinked path (non-canonical)
+      process.env.HOME = symlinkHome;
+      process.env.CODEX_HOME = join(symlinkHome, '.codex');
+      process.chdir(repo);
+
+      // This should succeed without throwing "outside managed scope" error
+      // The key is that scope validation must handle symlinks in the HOME path
+      await setup({ scope: 'user' });
+      assert(existsSync(join(symlinkHome, '.codex')), 'CODEX_HOME should be created');
+    } finally {
+      process.chdir(previousCwd);
+      if (typeof previousHome === 'string') {
+        process.env.HOME = previousHome;
+      } else {
+        delete process.env.HOME;
+      }
+      if (typeof previousCodexHome === 'string') {
+        process.env.CODEX_HOME = previousCodexHome;
+      } else {
+        delete process.env.CODEX_HOME;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

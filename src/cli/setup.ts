@@ -2450,7 +2450,7 @@ async function getValidationScopeRoot(destinationPath: string): Promise<string> 
 			isAbsolute(omxRoot) ? omxRoot : join(process.cwd(), omxRoot)
 		);
 		if (realDestPath.startsWith(realOmxRoot + sep) || realDestPath === realOmxRoot) {
-			return omxRoot; // Return the original OMX_ROOT for use as scope root
+			return realOmxRoot; // Return the canonical OMX_ROOT for consistent scope comparison
 		}
 	}
 	
@@ -2461,17 +2461,17 @@ async function getValidationScopeRoot(destinationPath: string): Promise<string> 
 		// If the destination is under the project root but NOT under user's CODEX_HOME,
 		// it's a project-scoped file that should validate against projectRoot
 		if (!realDestPath.startsWith(realCodexHome + sep) && realDestPath !== realCodexHome) {
-			return projectRoot;
+			return realProjectRoot; // Return canonical project root
 		}
 	}
 	
 	// Check if the destination is under CODEX_HOME (using real paths for comparison)
 	if (realDestPath.startsWith(realCodexHome + sep) || realDestPath === realCodexHome) {
-		return codexHomeDir; // Return the original (non-canonical) path for use as scope root
+		return realCodexHome; // Return the canonical CODEX_HOME for consistent scope comparison
 	}
 	
 	// Otherwise, it's validated against the home directory
-	return homedir();
+	return await canonicalizePathToRealForm(homedir());
 }
 
 async function ensureBackup(
