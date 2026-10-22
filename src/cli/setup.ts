@@ -2326,17 +2326,90 @@ async function assertManagedDestination(
 }
 
 /**
+ * Canonicalize a path to its real form using the deepest-existing-ancestor pattern.
+ * Walks from the given path up to find the deepest existing component, realpath's it,
+ * then re-appends any non-existent tail. This ensures consistent handling of OS-level
+ * symlinks in parent directories (e.g., /tmp -> /private/tmp on macOS).
+ * #4352912480: Handles MISSING scope roots by canonicalizing through deepest existing ancestor.
+ */
+async function canonicalizePathToDeepestExistingAncestor(absolutePath: string): Promise<string> {
+	let realPath: string = absolutePath;
+	let currentPath = absolutePath;
+	while (currentPath && currentPath !== dirname(currentPath)) {
+		try {
+			// Try to realpath the current path
+			realPath = await realpath(currentPath);
+			// Successfully realpathhed; now append the remaining tail
+			const tail = absolutePath.slice(currentPath.length);
+			realPath = tail ? join(realPath, tail) : realPath;
+			break;
+		} catch (error) {
+			if (isMissingPathError(error)) {
+				// This component doesn't exist; try its parent
+				currentPath = dirname(currentPath);
+				if (currentPath === dirname(currentPath)) {
+					// Reached the filesystem root; use absolute path as-is
+					realPath = absolutePath;
+					break;
+				}
+			} else {
+				throw error;
+			}
+		}
+	}
+	return realPath;
+}
+
+/**
  * Determine the validation scope root for a destination based on its location.
+ * Canonicalizes paths to handle OS-level symlinks (e.g., /tmp -> /private/tmp on macOS).
+ * For project scope: validates against projectRoot (#4352912487)
  * Destinations under CODEX_HOME validate against CODEX_HOME;
+ * Destinations under OMX_ROOT (if set) validate against OMX_ROOT (#4352912502);
  * other paths (like ~/.omx, ~/.claude) validate against the user's home.
  */
-function getValidationScopeRoot(destinationPath: string): string {
+async function getValidationScopeRoot(destinationPath: string): Promise<string> {
 	const absPath = isAbsolute(destinationPath) ? destinationPath : join(process.cwd(), destinationPath);
+	const projectRoot = process.cwd();
 	const codexHomeDir = codexHome();
-	// Check if the destination is under CODEX_HOME
-	if (absPath.startsWith(codexHomeDir + sep) || absPath === codexHomeDir) {
-		return codexHomeDir;
+	const projectCodexHome = join(projectRoot, ".codex");
+	
+	// Canonicalize both paths to handle symlinks consistently
+	const realDestPath = await canonicalizePathToDeepestExistingAncestor(absPath);
+	const realCodexHome = await canonicalizePathToDeepestExistingAncestor(
+		isAbsolute(codexHomeDir) ? codexHomeDir : join(process.cwd(), codexHomeDir)
+	);
+	const realProjectCodexHome = await canonicalizePathToDeepestExistingAncestor(projectCodexHome);
+	const realProjectRoot = await canonicalizePathToDeepestExistingAncestor(projectRoot);
+	const realHome = await canonicalizePathToDeepestExistingAncestor(homedir());
+	
+	// Check OMX_ROOT override first (#4352912502)
+	const omxRoot = process.env.OMX_ROOT;
+	if (omxRoot) {
+		const realOmxRoot = await canonicalizePathToDeepestExistingAncestor(
+			isAbsolute(omxRoot) ? omxRoot : join(process.cwd(), omxRoot)
+		);
+		if (realDestPath.startsWith(realOmxRoot + sep) || realDestPath === realOmxRoot) {
+			return omxRoot; // Return the original OMX_ROOT for use as scope root
+		}
 	}
+	
+	// Check if destination is under project root or project .codex (#4352912487)
+	// This indicates project scope files that should validate against projectRoot
+	if (realDestPath.startsWith(realProjectRoot + sep) || realDestPath === realProjectRoot ||
+		realDestPath.startsWith(realProjectCodexHome + sep) || realDestPath === realProjectCodexHome) {
+		// If the destination is under the project root but NOT under user's CODEX_HOME,
+		// it's a project-scoped file that should validate against projectRoot
+		if (!realDestPath.startsWith(realCodexHome + sep) && realDestPath !== realCodexHome) {
+			return projectRoot;
+		}
+	}
+	
+	// Check if the destination is under CODEX_HOME (using real paths for comparison)
+	if (realDestPath.startsWith(realCodexHome + sep) || realDestPath === realCodexHome) {
+		return codexHomeDir; // Return the original (non-canonical) path for use as scope root
+	}
+	
 	// Otherwise, it's validated against the home directory
 	return homedir();
 }
@@ -2347,7 +2420,7 @@ async function ensureBackup(
 	backupContext: SetupBackupContext,
 	options: Pick<SetupOptions, "dryRun" | "verbose">,
 ): Promise<boolean> {
-	const scopeRoot = getValidationScopeRoot(destinationPath);
+	const scopeRoot = await getValidationScopeRoot(destinationPath);
 	await assertManagedDestination(destinationPath, scopeRoot);
 	if (!contentChanged || !existsSync(destinationPath)) return false;
 
@@ -2359,7 +2432,7 @@ async function ensureBackup(
 	const backupPath = join(backupContext.backupRoot, safeRelativePath);
 
 	if (!options.dryRun) {
-		const backupScopeRoot = getValidationScopeRoot(backupPath);
+		const backupScopeRoot = await getValidationScopeRoot(backupPath);
 		await assertManagedDestination(backupPath, backupScopeRoot);
 		await mkdir(dirname(backupPath), { recursive: true });
 		await copyFile(destinationPath, backupPath);
@@ -4663,7 +4736,7 @@ export async function setup(options: SetupOptions = {}): Promise<void> {
 	// (CODEX_HOME for files under CODEX_HOME, homedir() for ~/.omx and other paths)
 	for (const dir of userScopeDirs) {
 		if (!dryRun) {
-			const dirScopeRoot = getValidationScopeRoot(dir);
+			const dirScopeRoot = await getValidationScopeRoot(dir);
 			await assertManagedDestination(dir, dirScopeRoot);
 			await mkdir(dir, { recursive: true });
 		}
@@ -5558,7 +5631,7 @@ async function syncManagedFileFromDisk(
 	options: Pick<SetupOptions, "dryRun" | "verbose">,
 	verboseLabel: string,
 ): Promise<void> {
-	const dstScopeRoot = getValidationScopeRoot(dstPath);
+	const dstScopeRoot = await getValidationScopeRoot(dstPath);
 	await assertManagedDestination(dstPath, dstScopeRoot);
 	const destinationExists = existsSync(dstPath);
 	const changed = !destinationExists || (await filesDiffer(srcPath, dstPath));
@@ -5593,7 +5666,7 @@ async function syncManagedContent(
 	options: Pick<SetupOptions, "dryRun" | "verbose">,
 	verboseLabel: string,
 ): Promise<void> {
-	const dstScopeRoot = getValidationScopeRoot(dstPath);
+	const dstScopeRoot = await getValidationScopeRoot(dstPath);
 	await assertManagedDestination(dstPath, dstScopeRoot);
 	const destinationExists = existsSync(dstPath);
 	let changed = true;
@@ -5708,7 +5781,7 @@ async function syncNativeAgentToml(
 ): Promise<void> {
 	const fileName = basename(dstPath);
 	const nextHash = hashContent(content);
-	const dstScopeRoot = getValidationScopeRoot(dstPath);
+	const dstScopeRoot = await getValidationScopeRoot(dstPath);
 	await assertManagedDestination(dstPath, dstScopeRoot);
 	const destinationExists = existsSync(dstPath);
 
@@ -6008,7 +6081,7 @@ async function refreshNativeAgentConfigs(
 	const summary = createEmptyCategorySummary();
 
 	if (!options.dryRun) {
-		const agentsDirScopeRoot = getValidationScopeRoot(agentsDir);
+		const agentsDirScopeRoot = await getValidationScopeRoot(agentsDir);
 		await assertManagedDestination(agentsDir, agentsDirScopeRoot);
 		await mkdir(agentsDir, { recursive: true });
 	}
@@ -6120,7 +6193,7 @@ async function refreshNativeAgentConfigs(
 	}
 
 	if (!options.dryRun) {
-		const manifestScopeRoot = getValidationScopeRoot(join(agentsDir, "..", ".omx", "native-agents.json"));
+		const manifestScopeRoot = await getValidationScopeRoot(join(agentsDir, "..", ".omx", "native-agents.json"));
 		await writeNativeAgentInstallManifest(agentsDir, nativeAgentManifest, manifestScopeRoot);
 	}
 
@@ -6193,7 +6266,7 @@ export async function installSkills(
 	if (!existsSync(srcDir)) return summary;
 	// Validate the skills directory before creating any skill subdirectories
 	if (!options.dryRun) {
-		const dstDirScopeRoot = getValidationScopeRoot(dstDir);
+		const dstDirScopeRoot = await getValidationScopeRoot(dstDir);
 		await assertManagedDestination(dstDir, dstDirScopeRoot);
 	}
 	const installableSkillNames = getSetupInstallableSkillNames();
@@ -6264,7 +6337,7 @@ export async function installSkills(
 		const skillDst = skill.destinationDir;
 
 		if (!options.dryRun) {
-			const skillDstScopeRoot = getValidationScopeRoot(skillDst);
+			const skillDstScopeRoot = await getValidationScopeRoot(skillDst);
 			await assertManagedDestination(skillDst, skillDstScopeRoot);
 			await mkdir(skillDst, { recursive: true });
 		}
@@ -6307,7 +6380,7 @@ export async function installSkills(
 	// Without an authority path, refuse to create a receipt rather than placing deletion authority
 	// in the user-writable skills directory.
 	if (options.skillReceiptPath) {
-		const receiptScopeRoot = getValidationScopeRoot(options.skillReceiptPath);
+		const receiptScopeRoot = await getValidationScopeRoot(options.skillReceiptPath);
 		await writeInstalledSkillReceipt(options.skillReceiptPath, dstDir, writtenFilesBySkill, options, receiptScopeRoot);
 	}
 
@@ -6371,7 +6444,7 @@ async function removeDirectoryCopyAware(
 	if (!destinationExists) return false;
 
 	// Determine the scope root based on source directory location
-	const scopeRoot = getValidationScopeRoot(sourceDir);
+	const scopeRoot = await getValidationScopeRoot(sourceDir);
 	const relativePath = relative(scopeRoot, sourceDir);
 	const safeRelativePath =
 		relativePath.startsWith("..") || relativePath === ""
