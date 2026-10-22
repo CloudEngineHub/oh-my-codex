@@ -1,6 +1,6 @@
 # oh-my-codex 0.21.31
 
-`0.21.31` is a patch release for setup symlink safety and dispatch read-failure handling (2 commits, 7 files, +120/−11; PR #3881).
+`0.21.31` is a patch release for setup symlink safety (2 commits, 7 files, +120/−11; PR #3881).
 
 Versioning continues the 0.21.x patch train. This release improves setup robustness by refusing symlinked managed destinations, preventing unintended writes outside the repository.
 

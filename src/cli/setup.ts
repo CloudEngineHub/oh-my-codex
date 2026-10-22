@@ -2188,23 +2188,44 @@ async function commitNativeHookTransaction(
 
 
 /**
- * A symlinked destination would redirect reads, backups and writes outside the
- * managed tree, so refuse before touching it.
+ * A symlinked destination or any ancestor in the path would redirect reads, backups and writes
+ * outside the managed tree, so refuse before touching it. Validates every path component
+ * without following symlinks, not just the leaf destination.
  */
 async function assertNoSymlinkDestination(destinationPath: string): Promise<void> {
-	let destinationStat: Stats;
-	try {
-		destinationStat = await lstat(destinationPath);
-	} catch (error) {
-		if (isMissingPathError(error)) return;
-		throw error;
-	}
-	if (destinationStat.isSymbolicLink()) {
-		const msg =
-			`Refusing to install through symlink ${destinationPath}. ` +
-			`Either remove the symlink (rm ${destinationPath}), ` +
-			`or move the target to the expected location before running setup again.`;
-		throw new Error(msg);
+	const { dirname } = await import('path');
+	
+	// Check each component of the path from the destination up to the root
+	let currentPath = destinationPath;
+	const visited = new Set<string>();
+	
+	while (currentPath && currentPath !== '/' && currentPath !== '.') {
+		if (visited.has(currentPath)) break; // Avoid infinite loops
+		visited.add(currentPath);
+		
+		let stat: Stats;
+		try {
+			stat = await lstat(currentPath);
+		} catch (error) {
+			if (isMissingPathError(error)) {
+				// Path component doesn't exist yet, check parent
+				currentPath = dirname(currentPath);
+				continue;
+			}
+			throw error;
+		}
+		
+		if (stat.isSymbolicLink()) {
+			const msg =
+				`Refusing to install through symlink ${currentPath}. ` +
+				`Either remove the symlink (rm ${currentPath}), ` +
+				`or move the target to the expected location before running setup again.`;
+			throw new Error(msg);
+		}
+		
+		const parentPath = dirname(currentPath);
+		if (parentPath === currentPath) break; // Reached root or filesystem boundary
+		currentPath = parentPath;
 	}
 }
 

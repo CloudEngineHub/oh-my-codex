@@ -79,4 +79,80 @@ describe('omx setup symlink destinations', () => {
       assert.equal(await readFile(victim, 'utf8'), 'ORIGINAL-PROMPT-CONTENT\n');
     });
   });
+
+  it('rejects a symlinked ancestor directory (.codex)', async () => {
+    await withRepo(async (repo, parent) => {
+      const targetDir = join(parent, 'external-codex');
+      await mkdir(targetDir);
+      const victim = join(targetDir, 'secret.txt');
+      await writeFile(victim, 'EXTERNAL-SECRET\n');
+      
+      // Create .codex as a symlink to external directory
+      await symlink(targetDir, join(repo, '.codex'));
+
+      await assert.rejects(
+        setup({ scope: 'project' }),
+        (err: any) => {
+          const msg = err?.message || '';
+          return (
+            msg.includes('Refusing to install through symlink') &&
+            msg.includes('.codex') &&
+            msg.includes('Either remove the symlink')
+          );
+        },
+      );
+      assert.equal(await readFile(victim, 'utf8'), 'EXTERNAL-SECRET\n');
+    });
+  });
+
+  it('rejects a symlinked auth directory', async () => {
+    await withRepo(async (repo, parent) => {
+      const targetDir = join(parent, 'external-auth');
+      await mkdir(targetDir);
+      const victim = join(targetDir, 'token.txt');
+      await writeFile(victim, 'SECRET-TOKEN\n');
+      
+      // Create .omx as a symlink to external directory
+      await symlink(targetDir, join(repo, '.omx'));
+
+      await assert.rejects(
+        setup({ scope: 'project' }),
+        (err: any) => {
+          const msg = err?.message || '';
+          return (
+            msg.includes('Refusing to install through symlink') &&
+            msg.includes('.omx') &&
+            msg.includes('Either remove the symlink')
+          );
+        },
+      );
+      assert.equal(await readFile(victim, 'utf8'), 'SECRET-TOKEN\n');
+    });
+  });
+
+  it('rejects an interview artifact symlink that resolves outside the repository', async () => {
+    await withRepo(async (repo, parent) => {
+      const targetDir = join(parent, 'external-interview');
+      await mkdir(targetDir);
+      const victim = join(targetDir, 'artifact.json');
+      await writeFile(victim, '{"secret": true}\n');
+      
+      // Create .omx/interview as a symlink to external directory
+      await mkdir(join(repo, '.omx'), { recursive: true });
+      await symlink(targetDir, join(repo, '.omx', 'interview'));
+
+      await assert.rejects(
+        setup({ scope: 'project' }),
+        (err: any) => {
+          const msg = err?.message || '';
+          return (
+            msg.includes('Refusing to install through symlink') &&
+            (msg.includes('.omx') || msg.includes('interview')) &&
+            msg.includes('Either remove the symlink')
+          );
+        },
+      );
+      assert.equal(await readFile(victim, 'utf8'), '{"secret": true}\n');
+    });
+  });
 });
