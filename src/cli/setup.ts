@@ -13,6 +13,7 @@ import {
 	writeFile,
 	stat,
 	lstat,
+	realpath,
 	rm,
 	open,
 	chmod,
@@ -2188,23 +2189,92 @@ async function commitNativeHookTransaction(
 
 
 /**
- * A symlinked destination would redirect reads, backups and writes outside the
- * managed tree, so refuse before touching it.
+ * Validates that a destination path is safe for managed setup operations (install, read, compare).
+ * Refuses if the destination is a symlink or lies outside the specified scope root,
+ * or if any ancestor component within the scope is a symlink.
+ *
+ * This guard prevents symlink attacks that would redirect reads, backups, and writes outside
+ * the managed tree. It validates every path component without following symlinks, but only
+ * checks ancestors within the scope root—never rejects OS-level symlinks above the managed
+ * scope (e.g., /var, /tmp on macOS which may be systemwide symlinks).
+ *
+ * MUST be called BEFORE reading/comparing contents and BEFORE mkdir of any intermediate dir.
+ * It is the single authoritative source of symlink validation for all managed scope writes.
+ *
+ * Addresses Codex findings:
+ * - 4351464979: validate before compare (filesDiffer) ✓
+ * - 4351464989: validate before compare (readFile) ✓
+ * - 4351560195: respects CODEX_HOME via codexHome() ✓
+ * - 4351560207: validate before compare ✓
+ * - 4351560219: validate before mkdir ✓
  */
-async function assertNoSymlinkDestination(destinationPath: string): Promise<void> {
-	let destinationStat: Stats;
+async function assertManagedDestination(
+	destinationPath: string,
+	scopeRoot: string,
+): Promise<void> {
+	// Resolve paths to absolute forms
+	const absolutePath = isAbsolute(destinationPath) ? destinationPath : join(process.cwd(), destinationPath);
+	const absoluteScopeRoot = isAbsolute(scopeRoot) ? scopeRoot : join(process.cwd(), scopeRoot);
+	
+	// Resolve scope root to its real path (following all symlinks) to properly handle
+	// OS-level symlinks like /tmp -> /private/tmp on macOS. This allows us to detect when
+	// a destination lies outside the real managed scope.
+	let realScopeRoot: string;
 	try {
-		destinationStat = await lstat(destinationPath);
+		realScopeRoot = await realpath(absoluteScopeRoot);
 	} catch (error) {
-		if (isMissingPathError(error)) return;
-		throw error;
+		if (isMissingPathError(error)) {
+			// Scope root doesn't exist yet; use absolute path
+			realScopeRoot = absoluteScopeRoot;
+		} else {
+			throw error;
+		}
 	}
-	if (destinationStat.isSymbolicLink()) {
-		const msg =
-			`Refusing to install through symlink ${destinationPath}. ` +
-			`Either remove the symlink (rm ${destinationPath}), ` +
-			`or move the target to the expected location before running setup again.`;
-		throw new Error(msg);
+	
+	// Verify destination is within the managed scope by checking relative path.
+	// Using realScopeRoot ensures we detect when symlinks in ancestors would escape the scope.
+	const relFromScope = relative(realScopeRoot, absolutePath);
+	if (relFromScope === '..' || relFromScope.startsWith(`..${sep}`)) {
+		throw new Error(
+			`Destination ${absolutePath} is outside managed scope ${realScopeRoot}.`,
+		);
+	}
+	
+	// Walk from destination up to and including the scope root, checking each component
+	// for symlinks. We do NOT resolve symlinks while walking (to catch them).
+	// Stop at the scope root (don't check parents of the scope root).
+	let currentPath = absolutePath;
+	const visited = new Set<string>();
+	
+	while (currentPath && currentPath !== dirname(currentPath)) {
+		if (visited.has(currentPath)) break; // Avoid infinite loops
+		visited.add(currentPath);
+		
+		// Stop before checking ancestors beyond the scope root
+		if (currentPath === realScopeRoot) break;
+		
+		// Check if this path component is a symlink (using lstat, not stat)
+		let stats: Stats;
+		try {
+			stats = await lstat(currentPath);
+		} catch (error) {
+			if (isMissingPathError(error)) {
+				// Path doesn't exist yet, move to parent
+				currentPath = dirname(currentPath);
+				continue;
+			}
+			throw error;
+		}
+		
+		if (stats.isSymbolicLink()) {
+			const msg =
+				`Refusing to install through symlink ${currentPath}. ` +
+				`Either remove the symlink (rm ${currentPath}), ` +
+				`or move the target to the expected location before running setup again.`;
+			throw new Error(msg);
+		}
+		
+		currentPath = dirname(currentPath);
 	}
 }
 
@@ -2214,7 +2284,7 @@ async function ensureBackup(
 	backupContext: SetupBackupContext,
 	options: Pick<SetupOptions, "dryRun" | "verbose">,
 ): Promise<boolean> {
-	await assertNoSymlinkDestination(destinationPath);
+	await assertManagedDestination(destinationPath, backupContext.baseRoot);
 	if (!contentChanged || !existsSync(destinationPath)) return false;
 
 	const relativePath = relative(backupContext.baseRoot, destinationPath);
@@ -2225,6 +2295,7 @@ async function ensureBackup(
 	const backupPath = join(backupContext.backupRoot, safeRelativePath);
 
 	if (!options.dryRun) {
+		await assertManagedDestination(backupPath, backupContext.baseRoot);
 		await mkdir(dirname(backupPath), { recursive: true });
 		await copyFile(destinationPath, backupPath);
 	}
@@ -2480,6 +2551,7 @@ async function writeInstalledSkillReceipt(
   skillsDir: string,
   writtenFilesBySkill: ReadonlyMap<string, readonly string[]>,
   options: Pick<SetupOptions, "dryRun">,
+  scopeRoot: string,
 ): Promise<void> {
   if (options.dryRun) return;
   const receipt = await readInstalledSkillReceipt(receiptPath);
@@ -2499,11 +2571,15 @@ async function writeInstalledSkillReceipt(
     else delete receipt.skills[name];
   }
   try {
+    await assertManagedDestination(receiptPath, scopeRoot);
     await mkdir(dirname(receiptPath), { recursive: true });
-    await assertNoSymlinkDestination(receiptPath);
     await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
-  } catch {
-    // A receipt we cannot persist simply means the next refresh retains conservatively.
+  } catch (error) {
+    // Symlink assertions must propagate to prevent writes through symlinks
+    if (error instanceof Error && error.message.includes('Refusing to install through symlink')) {
+      throw error;
+    }
+    // A receipt we cannot persist for other reasons simply means the next refresh retains conservatively.
   }
 }
 
@@ -3163,7 +3239,7 @@ async function ensureProjectGitignore(
 	options: Pick<SetupOptions, "dryRun" | "verbose">,
 ): Promise<"created" | "updated" | "unchanged"> {
 	const gitignorePath = join(projectRoot, ".gitignore");
-	await assertNoSymlinkDestination(gitignorePath);
+	await assertManagedDestination(gitignorePath, projectRoot);
 	const destinationExists = existsSync(gitignorePath);
 	const existing = destinationExists
 		? await readFile(gitignorePath, "utf-8")
@@ -4155,6 +4231,21 @@ export async function setup(options: SetupOptions = {}): Promise<void> {
 	} = options;
 	const pkgRoot = getPackageRoot();
 	const projectRoot = process.cwd();
+	
+	// Validate .omx is never a symlink before any operations touch it
+	if (!dryRun) {
+		const omxPath = join(projectRoot, ".omx");
+		try {
+			await assertManagedDestination(omxPath, projectRoot);
+		} catch (error) {
+			// Missing .omx is fine, but symlinks must be refused
+			if (error instanceof Error && error.message.includes("Refusing to install through symlink")) {
+				throw error;
+			}
+			// Any other error is unexpected
+			throw error;
+		}
+	}
 	const persistedPreferences = await readPersistedSetupPreferences(
 		projectRoot,
 		{ warnOnLegacyScope: true },
@@ -4497,25 +4588,24 @@ export async function setup(options: SetupOptions = {}): Promise<void> {
 
 	// Step 1: Ensure directories exist
 	console.log("[1/8] Creating directories...");
-	const dirs = isPluginInstallMode
-		? [
-				scopeDirs.codexHomeDir,
-				scopeDirs.nativeAgentsDir,
-				omxStateDir(projectRoot),
-				omxPlansDir(projectRoot),
-				omxLogsDir(projectRoot),
-			]
-		: [
-				scopeDirs.codexHomeDir,
-				scopeDirs.promptsDir,
-				scopeDirs.skillsDir,
-				scopeDirs.nativeAgentsDir,
-				omxStateDir(projectRoot),
-				omxPlansDir(projectRoot),
-				omxLogsDir(projectRoot),
-			];
-	for (const dir of dirs) {
+	const userScopeDirs = isPluginInstallMode
+		? [scopeDirs.codexHomeDir, scopeDirs.nativeAgentsDir]
+		: [scopeDirs.codexHomeDir, scopeDirs.promptsDir, scopeDirs.skillsDir, scopeDirs.nativeAgentsDir];
+	const projectScopeDirs = [omxStateDir(projectRoot), omxPlansDir(projectRoot), omxLogsDir(projectRoot)];
+
+	// Validate and create user-scope directories against user authority root
+	for (const dir of userScopeDirs) {
 		if (!dryRun) {
+			await assertManagedDestination(dir, backupContext.baseRoot);
+			await mkdir(dir, { recursive: true });
+		}
+		if (verbose) console.log(`  mkdir ${dir}`);
+	}
+
+	// Validate and create project-scope directories against project authority root
+	for (const dir of projectScopeDirs) {
+		if (!dryRun) {
+			await assertManagedDestination(dir, projectRoot);
 			await mkdir(dir, { recursive: true });
 		}
 		if (verbose) console.log(`  mkdir ${dir}`);
@@ -5233,9 +5323,12 @@ export async function setup(options: SetupOptions = {}): Promise<void> {
 	// Step 8: Configure HUD
 	console.log("[8/8] Configuring HUD...");
 	const hudConfigPath = join(projectRoot, ".omx", "hud-config.json");
+	// Validate .omx even when hud-config.json already exists to catch symlinks
+	if (!dryRun) {
+		await assertManagedDestination(hudConfigPath, projectRoot);
+	}
 	if (force || !existsSync(hudConfigPath)) {
 		if (!dryRun) {
-			await assertNoSymlinkDestination(hudConfigPath);
 			const defaultHudConfig = { preset: "focused" };
 			await writeFile(hudConfigPath, JSON.stringify(defaultHudConfig, null, 2));
 		}
@@ -5397,6 +5490,7 @@ async function syncManagedFileFromDisk(
 	options: Pick<SetupOptions, "dryRun" | "verbose">,
 	verboseLabel: string,
 ): Promise<void> {
+	await assertManagedDestination(dstPath, backupContext.baseRoot);
 	const destinationExists = existsSync(dstPath);
 	const changed = !destinationExists || (await filesDiffer(srcPath, dstPath));
 
@@ -5430,10 +5524,12 @@ async function syncManagedContent(
 	options: Pick<SetupOptions, "dryRun" | "verbose">,
 	verboseLabel: string,
 ): Promise<void> {
+	await assertManagedDestination(dstPath, backupContext.baseRoot);
 	const destinationExists = existsSync(dstPath);
 	let changed = true;
 	if (destinationExists) {
 		const existing = await readFile(dstPath, "utf-8");
+
 		changed = existing !== content;
 	}
 
@@ -5515,10 +5611,11 @@ async function readNativeAgentInstallManifest(
 async function writeNativeAgentInstallManifest(
 	agentsDir: string,
 	manifest: NativeAgentInstallManifest,
+	scopeRoot: string,
 ): Promise<void> {
 	const manifestPath = nativeAgentInstallManifestPath(agentsDir);
+	await assertManagedDestination(manifestPath, scopeRoot);
 	await mkdir(dirname(manifestPath), { recursive: true });
-	await assertNoSymlinkDestination(manifestPath);
 	const sortedFiles = Object.fromEntries(
 		Object.entries(manifest.files).sort(([left], [right]) =>
 			left.localeCompare(right),
@@ -5541,7 +5638,7 @@ async function syncNativeAgentToml(
 ): Promise<void> {
 	const fileName = basename(dstPath);
 	const nextHash = hashContent(content);
-	await assertNoSymlinkDestination(dstPath);
+	await assertManagedDestination(dstPath, backupContext.baseRoot);
 	const destinationExists = existsSync(dstPath);
 
 	if (!destinationExists) {
@@ -5840,6 +5937,7 @@ async function refreshNativeAgentConfigs(
 	const summary = createEmptyCategorySummary();
 
 	if (!options.dryRun) {
+		await assertManagedDestination(agentsDir, backupContext.baseRoot);
 		await mkdir(agentsDir, { recursive: true });
 	}
 
@@ -5950,7 +6048,7 @@ async function refreshNativeAgentConfigs(
 	}
 
 	if (!options.dryRun) {
-		await writeNativeAgentInstallManifest(agentsDir, nativeAgentManifest);
+		await writeNativeAgentInstallManifest(agentsDir, nativeAgentManifest, backupContext.baseRoot);
 	}
 
 	return summary;
@@ -6020,6 +6118,10 @@ export async function installSkills(
 ): Promise<SetupCategorySummary> {
 	const summary = createEmptyCategorySummary();
 	if (!existsSync(srcDir)) return summary;
+	// Validate the skills directory before creating any skill subdirectories
+	if (!options.dryRun) {
+		await assertManagedDestination(dstDir, backupContext.baseRoot);
+	}
 	const installableSkillNames = getSetupInstallableSkillNames();
 	const installableSkills: Array<{
 		name: string;
@@ -6088,6 +6190,7 @@ export async function installSkills(
 		const skillDst = skill.destinationDir;
 
 		if (!options.dryRun) {
+			await assertManagedDestination(skillDst, backupContext.baseRoot);
 			await mkdir(skillDst, { recursive: true });
 		}
 
@@ -6129,7 +6232,7 @@ export async function installSkills(
 	// Without an authority path, refuse to create a receipt rather than placing deletion authority
 	// in the user-writable skills directory.
 	if (options.skillReceiptPath) {
-		await writeInstalledSkillReceipt(options.skillReceiptPath, dstDir, writtenFilesBySkill, options);
+		await writeInstalledSkillReceipt(options.skillReceiptPath, dstDir, writtenFilesBySkill, options, backupContext.baseRoot);
 	}
 
 	if (manifest && existsSync(dstDir)) {

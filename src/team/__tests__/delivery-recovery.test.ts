@@ -477,7 +477,8 @@ it('does not mark message notified when dispatch snapshot is corrupted during fi
   
   // Disable the runtime bridge to ensure there's no authoritative fallback.
   // This forces readDispatchRequests to rely on the local shadow, so corruption causes real failure.
-  process.env.OMX_RUNTIME_BRIDGE = '';
+  // Set to '0' (the recognized disabled value) since isBridgeEnabled() returns true for all other values.
+  process.env.OMX_RUNTIME_BRIDGE = '0';
   t.after(() => {
     delete process.env.OMX_RUNTIME_BRIDGE;
   });
@@ -490,19 +491,20 @@ it('does not mark message notified when dispatch snapshot is corrupted during fi
   let hookInvoked = false;
   let requestsPath = '';
   let originalContent = '';
-  const { setMailboxDeliveryAfterPhase1HookForTest } = await import('../runtime.js');
-  setMailboxDeliveryAfterPhase1HookForTest(async (teamName: string, cwd: string) => {
+  const { setMailboxDeliveryAfterEnqueueHookForTest } = await import('../runtime.js');
+  setMailboxDeliveryAfterEnqueueHookForTest(async (teamName: string, cwd: string) => {
     hookInvoked = true;
     // Corrupt the snapshot after Phase 1.5 enqueue but before Phase 2 finalization.
+    // This allows the test to exercise the finalization code path that handles corrupted snapshots.
     requestsPath = join(cwd, '.omx', 'state', 'team', teamName, 'dispatch', 'requests.json');
     originalContent = await readFile(requestsPath, 'utf8');
     await writeFile(requestsPath, '{invalid json');
   });
   
   try {
-    // Call monitorTeam. The dispatch will be enqueued in Phase 1.5, but the finalization
-    // will see a corrupted snapshot and should return a retryable failure.
-    // This means the message should NOT be marked as notified.
+    // Call monitorTeam. The dispatch will be enqueued in Phase 1.5, and then the hook
+    // will corrupt the snapshot. The finalization will see a corrupted snapshot and 
+    // should return a retryable failure. This means the message should NOT be marked as notified.
     const { monitorTeam } = await import('../runtime.js');
     await monitorTeam('recovery', cwd);
     assert.equal(hookInvoked, true, 'test hook should have been invoked');
@@ -518,7 +520,7 @@ it('does not mark message notified when dispatch snapshot is corrupted during fi
     const hasNotificationRecord = message.message_id in snapshot.mailboxNotifiedByMessageId;
     assert.ok(!hasNotificationRecord, 'monitor snapshot should not have notification record for corrupted dispatch');
   } finally {
-    setMailboxDeliveryAfterPhase1HookForTest(null);
+    setMailboxDeliveryAfterEnqueueHookForTest(null);
     // Restore the snapshot for cleanup
     if (originalContent && requestsPath) {
       try {

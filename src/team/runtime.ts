@@ -509,6 +509,14 @@ export function setMailboxDeliveryAfterPhase1HookForTest(
   mailboxDeliveryAfterPhase1HookForTest = hook;
 }
 
+let mailboxDeliveryAfterEnqueueHookForTest: ((teamName: string, cwd: string) => void | Promise<void>) | null = null;
+
+export function setMailboxDeliveryAfterEnqueueHookForTest(
+  hook: ((teamName: string, cwd: string) => void | Promise<void>) | null,
+): void {
+  mailboxDeliveryAfterEnqueueHookForTest = hook;
+}
+
 
 export function applyCreatedInteractiveSessionToConfig(
   config: TeamConfig,
@@ -6794,6 +6802,12 @@ async function deliverPendingMailboxMessages(
       }
     }
   });
+
+  // Test hook: allow injecting operations after Phase 1.5 enqueue and before Phase 2 finalization.
+  const enqueueHook = mailboxDeliveryAfterEnqueueHookForTest;
+  if (enqueueHook) {
+    await enqueueHook(teamName, cwd);
+  }
 
   // Phase 2: Finalize and notify outside the barrier to avoid holding the lock
   // during slow operations like waitForDispatchReceipt.
