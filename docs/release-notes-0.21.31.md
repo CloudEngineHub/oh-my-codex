@@ -6,7 +6,7 @@ Versioning continues the 0.21.x patch train. This release improves setup robustn
 
 ## Highlights
 
-- **Setup symlink destination refusal (#3881):** The `omx setup` command now detects and rejects symlinked managed destinations (including dangling links) before reading, backing up, or writing. This prevents scenarios where a committed `.gitignore` or prompt path symlink could cause `ensureBackup` to overwrite files outside the repository. The check is applied to all write paths: `.gitignore`, native agent TOMLs and manifest, HUD config, and skill receipt. This is a behavioral change: setup now fails closed on symlinked managed destinations.
+- **Setup symlink destination refusal (#3881):** The `omx setup` command now detects and rejects symlinked managed destinations (including dangling links) before reading, backing up, or writing. This prevents scenarios where a committed `.gitignore` or prompt path symlink could cause `ensureBackup` to overwrite files outside the repository. The check validates every path component without following symlinks, not just the leaf destination, preventing writes through symlinked ancestor directories. The check is applied to all write paths: `.gitignore`, native agent TOMLs and manifest, HUD config, and skill receipt. This is a behavioral change: setup now fails closed on symlinked managed destinations.
 
 ## Compatibility
 
