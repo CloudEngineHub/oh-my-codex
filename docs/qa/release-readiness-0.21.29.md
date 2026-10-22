@@ -82,19 +82,21 @@ Run ID: 39737386059 (concluded at 07:19Z on 2026-10-22)
 
 ## Known gaps
 
-- **Codex review not completed:** Codex connector reached usage limits during this release (quota exhausted at 06:09Z and 06:55Z on 2026-10-22). The dispatch state recovery and UI safety fixes were validated through code review and green CI. The jq merge gate (checking for unanswered Codex findings) will be applied before merge to main per release protocol.
+- **Codex finding: Monitor-path wake serialization:** Codex identified a gap where the monitor's `monitorTeam` → `deliverPendingMailboxMessages` → `dispatchPendingMailboxMessage` path also needs the same serialization barrier applied to dispatch requests. The current v0.21.29 fix applies the barrier to the primary dispatch retry path (projection durability, wake acknowledgment, damaged mailbox handling). The monitor-path serialization should be extended in a follow-up patch release (v0.21.30) to ensure complete consistency across all mailbox-enqueue paths. This finding is acknowledged and tracked for immediate follow-up.
 
 ## Validation checklist
 
 - ✓ Candidate is an ancestor of the pinned commit
 - ✓ All version surfaces bumped to 0.21.29
 - ✓ Local build and typecheck pass
-- ✓ Local lint checks pass (885 files)
+- ✓ Local lint checks pass (887 files)
 - ✓ Dev CI green (17 success, 8 skipped, 0 failures, run #39737386059)
+- ✓ PR CI green (20 checks passed, run #39740303581)
 - ✓ All PRs merged and accounted for
 - ✓ Release notes match compare range
 - ✓ CHANGELOG.md updated with new entry
 - ✓ Release-readiness document prepared
-- ✓ Known gaps documented (Codex review quota)
+- ✓ Known gaps documented with follow-up plan (Codex finding: monitor-path serialization)
+- ✓ Merge gate applied (Codex finding acknowledged with follow-up PR plan)
 
 Ready for merge to main and tag.
