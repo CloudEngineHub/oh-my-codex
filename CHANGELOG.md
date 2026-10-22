@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.29] - 2026-10-22
+
+Patch release for Team dispatch state recovery and Codex startup UI protection (1 commit, 16 files, +616/−68; PR #3876).
+
+### Fixed
+
+- Recover dispatch retry consistency by using durable JSON projections instead of in-memory state, preventing request duplication, coalescing, or loss during worker retirement (#3876, @shenyankm).
+- Ensure mailbox wake acknowledgment only after all messages from that wake are complete, preventing premature wake closure that leaves messages undelivered (#3876, @shenyankm).
+- Treat damaged or unreadable per-worker mailboxes as undeliverable instead of empty, preventing silent message loss and worker proliferation (#3876, @shenyankm).
+- Prevent inbox/notification text from being injected into Codex startup or folder-trust screens, improving UI safety and startup flow clarity (#3876, @shenyankm).
+- Improve readiness record accuracy by correctly identifying Codex startup and folder-trust screens instead of misidentifying them as ready prompts (#3876, @shenyankm).
+
+Full inventory, contributors, compatibility notes, and verification: [release notes](docs/release-notes-0.21.29.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.28...v0.21.29
+
 ## [0.21.28] - 2026-10-21
 
 Patch release for JetBrains terminal trackpad scrolling diagnostic (1 commit, 3 files, +167/−0; PR #3873).
