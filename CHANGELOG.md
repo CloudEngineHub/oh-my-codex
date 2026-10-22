@@ -6,11 +6,14 @@ All notable changes to this project are documented in this file.
 
 ## [0.21.31] - 2026-10-22
 
-Patch release for setup symlink safety (2 commits, 7 files, +120/−11; PR #3881).
+Patch release for setup symlink safety and dispatch read reliability (PRs #3881, #3883).
 
 ### Fixed
 
 - Refuse symlinked managed destinations in `omx setup`, preventing unintended writes outside the repository when a committed `.gitignore` or prompt path is a symlink (#3881, @shenyankm).
+- Unified setup symlink guard: single authoritative helper validates all managed scope writes before reading/comparing and before mkdir operations (#3887).
+- Fix dispatch read failures by improving state machine transitions in delivery-recovery (#3883, @shenyankm).
+- Correct test hook timing to run after mailbox discovery instead of before, ensuring comprehensive test coverage of dispatch race conditions (#3883, @shenyankm).
 
 Full inventory, contributors, compatibility notes, and verification: [release notes](docs/release-notes-0.21.31.md).
 
