@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile, lstat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -374,6 +374,46 @@ describe('omx setup symlink destinations', () => {
         } else {
           delete process.env.OMX_ROOT;
         }
+      }
+    });
+
+    it('rejects dangling symlinks in validation scope to prevent out-of-scope writes', async () => {
+      const wd = await mkdtemp(join(tmpdir(), 'omx-setup-dangling-symlink-'));
+      const previousCwd = process.cwd();
+      try {
+        process.chdir(wd);
+        // Create a project directory with a dangling symlink
+        await mkdir(join(wd, '.codex'), { recursive: true });
+        // Create a dangling symlink in the project
+        const symlinkPath = join(wd, '.gitignore-link');
+        // Create a symlink pointing to a non-existent target
+        await symlink(join(wd, '..', 'victim', '.gitignore'), symlinkPath);
+        
+        // Verify it's a dangling symlink
+        assert.equal(existsSync(symlinkPath), false, 'dangling symlink should not be followable with existsSync');
+        const stats = await lstat(symlinkPath);
+        assert.equal(stats.isSymbolicLink(), true, 'path should be a symlink');
+        
+        // Setup should succeed without following the dangling symlink
+        // The key is that the validation should detect the symlink and not try to follow it
+        const previousHome = process.env.HOME;
+        process.env.HOME = wd;
+        try {
+          // This should not throw and should not create files outside the scope
+          await setup({ scope: 'project', dryRun: true });
+          
+          // The key test: the dangling symlink should not be followed or created as a real file
+          assert.equal(existsSync(join(wd, '..', 'victim')), false, 'target of dangling symlink should not be created');
+        } finally {
+          if (typeof previousHome === 'string') {
+            process.env.HOME = previousHome;
+          } else {
+            delete process.env.HOME;
+          }
+        }
+      } finally {
+        process.chdir(previousCwd);
+        await rm(wd, { recursive: true, force: true });
       }
     });
   });

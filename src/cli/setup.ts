@@ -2206,6 +2206,19 @@ async function canonicalizePathToRealForm(absolutePath: string): Promise<string>
 	
 	while (currentPath && currentPath !== dirname(currentPath)) {
 		try {
+			// Check with lstat first to detect dangling symlinks before realpath (#4353639282)
+			// If this component is a symlink (even dangling), try its parent instead of following it
+			try {
+				const stats = await lstat(currentPath);
+				if (stats.isSymbolicLink()) {
+					// This is a symlink; don't follow it, try the parent instead
+					currentPath = dirname(currentPath);
+					continue;
+				}
+			} catch (lstatError) {
+				// lstat failed; this might be ENOENT, continue to realpath attempt
+			}
+			
 			// Try to realpath the current component (follows all symlinks)
 			realPath = await realpath(currentPath);
 			// Successfully realpathhed; now append the remaining tail
@@ -2218,8 +2231,8 @@ async function canonicalizePathToRealForm(absolutePath: string): Promise<string>
 				currentPath = dirname(currentPath);
 				if (currentPath === dirname(currentPath)) {
 					// Reached the filesystem root; use absolute path as-is
-					realPath = absolutePath;
-					break;
+				realPath = absolutePath;
+				break;
 				}
 			} else {
 				throw error;
@@ -2266,7 +2279,7 @@ async function assertManagedDestination(
 	
 	// SYMLINK GUARD (check first): Reject if any path component strictly BELOW the scope root is a symlink.
 	// Walk the LEXICAL path components from relative(scopeRoot, dest) to detect symlinks within scope.
-	// Use the original input paths in error messages for user clarity.
+	// Use relative path in error messages to avoid canonicalization issues with symlinked directories.
 	const relativePathFromScope = relative(absoluteScopeRoot, absolutePath);
 	if (relativePathFromScope && relativePathFromScope !== '.') {
 		// Split into components and walk from scope root down to destination
@@ -2279,10 +2292,13 @@ async function assertManagedDestination(
 			try {
 				const stats = await lstat(currentCheckPath);
 				if (stats.isSymbolicLink()) {
-					// Use the original input path for error message clarity
+					// Report the symlink path relative to scopeRoot for clarity and to avoid canonicalization issues.
+					// This allows the error message to match user-facing paths, especially when working in symlinked directories.
+					const relPathToSymlink = relative(absoluteScopeRoot, currentCheckPath);
+					const symlinkedPath = join(scopeRoot, relPathToSymlink);
 					const msg =
-						`Refusing to install through symlink ${destinationPath}. ` +
-						`Either remove the symlink (rm ${destinationPath}), ` +
+						`Refusing to install through symlink ${symlinkedPath}. ` +
+						`Either remove the symlink (rm ${symlinkedPath}), ` +
 						`or move the target to the expected location before running setup again.`;
 					throw new Error(msg);
 				}
