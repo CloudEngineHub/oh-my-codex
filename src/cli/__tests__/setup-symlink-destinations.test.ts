@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile, lstat } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile, lstat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -42,7 +42,8 @@ describe('omx setup symlink destinations', () => {
       await writeFile(victim, 'ORIGINAL-SECRET-CONTENT\n');
       await symlink('../victim.txt', join(repo, '.gitignore'));
 
-      const gitignorePath = join(repo, '.gitignore');
+      // setup resolves the project root from process.cwd(), which is canonical (macOS /var -> /private/var).
+      const gitignorePath = join(await realpath(repo), '.gitignore');
       await assert.rejects(
         setup({ scope: 'project' }),
         (err: any) => {
@@ -65,6 +66,7 @@ describe('omx setup symlink destinations', () => {
       await writeFile(victim, 'ORIGINAL-PROMPT-CONTENT\n');
       const analystPath = join(repo, '.codex', 'prompts', 'analyst.md');
       await symlink('../../../victim-prompt.txt', analystPath);
+      const reportedAnalystPath = join(await realpath(repo), '.codex', 'prompts', 'analyst.md');
 
       await assert.rejects(
         setup({ scope: 'project' }),
@@ -72,7 +74,7 @@ describe('omx setup symlink destinations', () => {
           const msg = err?.message || '';
           return (
             msg.includes('Refusing to install through symlink') &&
-            msg.includes(analystPath) &&
+            msg.includes(reportedAnalystPath) &&
             msg.includes('Either remove the symlink')
           );
         },
