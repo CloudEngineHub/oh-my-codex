@@ -19,10 +19,10 @@
 - fe18fe6d fix(setup): remove unnecessary dynamic import of path module
 - db88d456 fix(setup): refuse symlinked managed destinations (#3881)
 
-**Files changed:** 7 files, +120/−11
-- Cargo.lock, Cargo.toml, package.json, package-lock.json, plugin.json (version surfaces)
-- src/cli/setup.ts (symlink check implementation)
-- src/cli/__tests__/setup-symlink-destinations.test.ts (test coverage)
+**Files changed:** 21 files, +~200/−~50
+**Version surfaces:** Cargo.lock, Cargo.toml, package.json, package-lock.json, plugin.json
+**Setup changes:** src/cli/setup.ts (symlink validation), src/cli/__tests__/setup-symlink-destinations.test.ts (symlink test coverage)
+**Dispatch/Team changes:** src/team/runtime.ts (missing request handling, unsafe cast removal), src/team/state.ts (related dispatch handling), src/team/__tests__/delivery-recovery.test.ts (dispatch recovery test)
 
 ## Version surface verification
 
@@ -44,6 +44,7 @@ confirms all version surfaces resolve to `0.21.31`.
 
 | PR | Author | Title | Status |
 |---|---|---|---|
+| [#3883](https://github.com/Yeachan-Heo/oh-my-codex/pull/3883) | @shenyankm | fix(dispatch): properly handle missing request in finalization and replace unsafe casts | ✓ Merged |
 | [#3881](https://github.com/Yeachan-Heo/oh-my-codex/pull/3881) | @shenyankm | fix(setup): refuse symlinked managed destinations | ✓ Merged |
 
 ## Local gates
@@ -81,6 +82,9 @@ Verified at 17:40Z on 2026-10-22
 **Codex findings (resolved in 0.21.31):**
 - **P1 4350822390:** Test fixture replaced .omx/interview (untouched path) with .omx/state (managed by setup). All symlink destination tests pass. ✓ Fixed
 - **P2 4350822403:** Readiness doc pinned to final release candidate (0ed437c0) with all Codex findings addressed. ✓ Fixed
+- **P1 4351792994:** Directory validation now uses correct authority root - user-scope dirs validated against HOME, project-scope .omx dirs validated against projectRoot. ✓ Fixed
+- **P1 4351793009:** Dispatch corruption test hook moved after enqueue phase to allow finalization error handling to be tested. ✓ Fixed
+- **P2 4351899942:** Readiness doc updated to include dispatch changes from PR #3883. ✓ Fixed
 - **4351464979:** Validation added before filesDiffer in syncManagedFileFromDisk. ✓ Fixed
 - **4351464989:** Validation added before readFile in syncManagedContent. ✓ Fixed
 - **4351560195:** Code respects CODEX_HOME environment variable via codexHome() function. ✓ Fixed

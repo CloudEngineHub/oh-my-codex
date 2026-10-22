@@ -4588,26 +4588,24 @@ export async function setup(options: SetupOptions = {}): Promise<void> {
 
 	// Step 1: Ensure directories exist
 	console.log("[1/8] Creating directories...");
-	const dirs = isPluginInstallMode
-		? [
-				scopeDirs.codexHomeDir,
-				scopeDirs.nativeAgentsDir,
-				omxStateDir(projectRoot),
-				omxPlansDir(projectRoot),
-				omxLogsDir(projectRoot),
-			]
-		: [
-				scopeDirs.codexHomeDir,
-				scopeDirs.promptsDir,
-				scopeDirs.skillsDir,
-				scopeDirs.nativeAgentsDir,
-				omxStateDir(projectRoot),
-				omxPlansDir(projectRoot),
-				omxLogsDir(projectRoot),
-			];
-	for (const dir of dirs) {
+	const userScopeDirs = isPluginInstallMode
+		? [scopeDirs.codexHomeDir, scopeDirs.nativeAgentsDir]
+		: [scopeDirs.codexHomeDir, scopeDirs.promptsDir, scopeDirs.skillsDir, scopeDirs.nativeAgentsDir];
+	const projectScopeDirs = [omxStateDir(projectRoot), omxPlansDir(projectRoot), omxLogsDir(projectRoot)];
+
+	// Validate and create user-scope directories against user authority root
+	for (const dir of userScopeDirs) {
 		if (!dryRun) {
 			await assertManagedDestination(dir, backupContext.baseRoot);
+			await mkdir(dir, { recursive: true });
+		}
+		if (verbose) console.log(`  mkdir ${dir}`);
+	}
+
+	// Validate and create project-scope directories against project authority root
+	for (const dir of projectScopeDirs) {
+		if (!dryRun) {
+			await assertManagedDestination(dir, projectRoot);
 			await mkdir(dir, { recursive: true });
 		}
 		if (verbose) console.log(`  mkdir ${dir}`);
