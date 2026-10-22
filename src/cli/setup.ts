@@ -2240,14 +2240,18 @@ async function assertManagedDestination(
 		);
 	}
 	
-	// Walk from destination up to (but not including) the scope root, checking each component
+	// Walk from destination up to and including the scope root, checking each component
 	// for symlinks. We do NOT resolve symlinks while walking (to catch them).
+	// Stop at the scope root (don't check parents of the scope root).
 	let currentPath = absolutePath;
 	const visited = new Set<string>();
 	
-	while (currentPath && currentPath !== dirname(currentPath) && currentPath !== realScopeRoot) {
+	while (currentPath && currentPath !== dirname(currentPath)) {
 		if (visited.has(currentPath)) break; // Avoid infinite loops
 		visited.add(currentPath);
+		
+		// Stop before checking ancestors beyond the scope root
+		if (currentPath === realScopeRoot) break;
 		
 		// Check if this path component is a symlink (using lstat, not stat)
 		let stats: Stats;
@@ -2302,6 +2306,7 @@ async function ensureBackup(
 	const backupPath = join(backupContext.backupRoot, safeRelativePath);
 
 	if (!options.dryRun) {
+		await assertManagedDestination(backupPath, backupContext.baseRoot);
 		await mkdir(dirname(backupPath), { recursive: true });
 		await copyFile(destinationPath, backupPath);
 	}
@@ -5331,9 +5336,12 @@ export async function setup(options: SetupOptions = {}): Promise<void> {
 	// Step 8: Configure HUD
 	console.log("[8/8] Configuring HUD...");
 	const hudConfigPath = join(projectRoot, ".omx", "hud-config.json");
+	// Validate .omx even when hud-config.json already exists to catch symlinks
+	if (!dryRun) {
+		await assertManagedDestination(hudConfigPath, projectRoot);
+	}
 	if (force || !existsSync(hudConfigPath)) {
 		if (!dryRun) {
-			await assertManagedDestination(hudConfigPath, projectRoot);
 			const defaultHudConfig = { preset: "focused" };
 			await writeFile(hudConfigPath, JSON.stringify(defaultHudConfig, null, 2));
 		}
@@ -6123,6 +6131,10 @@ export async function installSkills(
 ): Promise<SetupCategorySummary> {
 	const summary = createEmptyCategorySummary();
 	if (!existsSync(srcDir)) return summary;
+	// Validate the skills directory before creating any skill subdirectories
+	if (!options.dryRun) {
+		await assertManagedDestination(dstDir, backupContext.baseRoot);
+	}
 	const installableSkillNames = getSetupInstallableSkillNames();
 	const installableSkills: Array<{
 		name: string;

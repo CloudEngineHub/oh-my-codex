@@ -182,6 +182,35 @@ describe('omx setup symlink destinations', () => {
     });
   });
 
+  it('rejects a symlinked .omx/backups when backing up a managed file', async () => {
+    await withRepo(async (repo, parent) => {
+      const targetDir = join(parent, 'external-backups');
+      await mkdir(targetDir);
+      const victim = join(targetDir, 'secret-backup.txt');
+      
+      // Create .omx/backups as a symlink to external directory
+      await mkdir(join(repo, '.omx'), { recursive: true });
+      await symlink(targetDir, join(repo, '.omx', 'backups'));
+      
+      // Create an existing .gitignore to trigger the backup code path
+      await writeFile(join(repo, '.gitignore'), 'original-gitignore\n');
+
+      await assert.rejects(
+        setup({ scope: 'project' }),
+        (err: any) => {
+          const msg = err?.message || '';
+          return (
+            msg.includes('Refusing to install through symlink') &&
+            msg.includes('backups') &&
+            msg.includes('Either remove the symlink')
+          );
+        },
+      );
+      // Verify nothing was written to the victim directory
+      assert.equal(existsSync(victim), false, 'Backup should not be written outside the scope');
+    });
+  });
+
   it('succeeds when scope root is under a symlinked parent (like /tmp on macOS) while still rejecting symlinks inside the managed tree', async () => {
     // Regression test for issue #3887: On macOS, /tmp is a symlink to /private/tmp,
     // so the setup should not reject paths just because they're under /tmp,
