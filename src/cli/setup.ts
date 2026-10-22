@@ -2194,140 +2194,19 @@ async function commitNativeHookTransaction(
 
 
 /**
- * Validates that a destination path is safe for managed setup operations (install, read, compare).
- * Refuses if the destination is a symlink or lies outside the specified scope root,
- * or if any ancestor component within the scope is a symlink.
- *
- * This guard prevents symlink attacks that would redirect reads, backups, and writes outside
- * the managed tree. It validates every path component without following symlinks, but only
- * checks ancestors within the scope root—never rejects OS-level symlinks above the managed
- * scope (e.g., /var, /tmp on macOS which may be systemwide symlinks).
- *
- * MUST be called BEFORE reading/comparing contents and BEFORE mkdir of any intermediate dir.
- * It is the single authoritative source of symlink validation for all managed scope writes.
- *
- * Addresses Codex findings:
- * - 4351464979: validate before compare (filesDiffer) ✓
- * - 4351464989: validate before compare (readFile) ✓
- * - 4351560195: respects CODEX_HOME via codexHome() ✓
- * - 4351560207: validate before compare ✓
- * - 4351560219: validate before mkdir ✓
- */
-async function assertManagedDestination(
-	destinationPath: string,
-	scopeRoot: string,
-): Promise<void> {
-	// Resolve paths to absolute forms
-	const absolutePath = isAbsolute(destinationPath) ? destinationPath : join(process.cwd(), destinationPath);
-	const absoluteScopeRoot = isAbsolute(scopeRoot) ? scopeRoot : join(process.cwd(), scopeRoot);
-	
-	// Resolve scope root to its real path (following all symlinks) to properly handle
-	// OS-level symlinks like /tmp -> /private/tmp on macOS. This allows us to detect when
-	// a destination lies outside the real managed scope.
-	let realScopeRoot: string;
-	try {
-		realScopeRoot = await realpath(absoluteScopeRoot);
-	} catch (error) {
-		if (isMissingPathError(error)) {
-			// Scope root doesn't exist yet; use absolute path
-			realScopeRoot = absoluteScopeRoot;
-		} else {
-			throw error;
-		}
-	}
-	
-	// Canonicalize destination path the same way as scope root:
-	// realpath the deepest existing ancestor and re-append the non-existent tail,
-	// but avoid following symlinks in the destination path itself.
-	// This ensures consistent handling of OS-level symlinks in ancestors.
-	const realDestinationPath = await canonicalizePathToDeepestExistingAncestor(absolutePath);
-	
-	// Verify destination is within the managed scope by checking relative path.
-	// Using realDestinationPath and realScopeRoot ensures consistent handling of symlinks.
-	const relFromScope = relative(realScopeRoot, realDestinationPath);
-	if (relFromScope === '..' || relFromScope.startsWith(`..${sep}`)) {
-		throw new Error(
-			`Destination ${absolutePath} is outside managed scope ${realScopeRoot}.`,
-		);
-	}
-	
-	// Walk from destination up to and including the scope root, checking each component
-	// for symlinks. We do NOT resolve symlinks while walking (to catch them).
-	// Stop at the scope root (don't check parents of the scope root).
-	let currentPath = absolutePath;
-	const visited = new Set<string>();
-	
-	while (currentPath && currentPath !== dirname(currentPath)) {
-		if (visited.has(currentPath)) break; // Avoid infinite loops
-		visited.add(currentPath);
-		
-		// Stop before checking ancestors beyond the scope root.
-		// Compare the realpath of currentPath with realScopeRoot to handle
-		// OS-level symlinks correctly.
-		let currentRealPath: string;
-		try {
-			currentRealPath = await realpath(currentPath);
-		} catch (error) {
-			if (isMissingPathError(error)) {
-				// Path doesn't exist yet, move to parent
-				currentPath = dirname(currentPath);
-				continue;
-			}
-			throw error;
-		}
-		
-		if (currentRealPath === realScopeRoot) break;
-		
-		// Check if this path component is a symlink (using lstat, not stat)
-		let stats: Stats;
-		try {
-			stats = await lstat(currentPath);
-		} catch (error) {
-			if (isMissingPathError(error)) {
-				// Path doesn't exist yet, move to parent
-				currentPath = dirname(currentPath);
-				continue;
-			}
-			throw error;
-		}
-		
-		if (stats.isSymbolicLink()) {
-			const msg =
-				`Refusing to install through symlink ${currentPath}. ` +
-				`Either remove the symlink (rm ${currentPath}), ` +
-				`or move the target to the expected location before running setup again.`;
-			throw new Error(msg);
-		}
-		
-		currentPath = dirname(currentPath);
-	}
-}
-
-/**
  * Canonicalize a path to its real form using the deepest-existing-ancestor pattern.
- * Walks from the given path up to find the deepest existing component, realpath's it,
- * then re-appends any non-existent tail. This ensures consistent handling of OS-level
+ * Uses fs.realpath (follows symlinks) on the deepest existing component, then
+ * re-appends any non-existent tail. This ensures consistent handling of OS-level
  * symlinks in parent directories (e.g., /tmp -> /private/tmp on macOS).
  * #4352912480: Handles MISSING scope roots by canonicalizing through deepest existing ancestor.
  */
-async function canonicalizePathToDeepestExistingAncestor(absolutePath: string): Promise<string> {
+async function canonicalizePathToRealForm(absolutePath: string): Promise<string> {
 	let realPath: string = absolutePath;
 	let currentPath = absolutePath;
+	
 	while (currentPath && currentPath !== dirname(currentPath)) {
 		try {
-			// Check if this component is a symlink using lstat (doesn't follow symlinks)
-			const stats = await lstat(currentPath);
-			if (stats.isSymbolicLink()) {
-				// This component is a symlink; don't follow it, move to parent
-				currentPath = dirname(currentPath);
-				if (currentPath === dirname(currentPath)) {
-					// Reached the filesystem root; use absolute path as-is
-					realPath = absolutePath;
-					break;
-				}
-				continue;
-			}
-			// Not a symlink; realpath it to handle OS-level symlinks in ancestors
+			// Try to realpath the current component (follows all symlinks)
 			realPath = await realpath(currentPath);
 			// Successfully realpathhed; now append the remaining tail
 			const tail = absolutePath.slice(currentPath.length);
@@ -2347,8 +2226,95 @@ async function canonicalizePathToDeepestExistingAncestor(absolutePath: string): 
 			}
 		}
 	}
+	
 	return realPath;
 }
+
+/**
+ * Validates that a destination path is safe for managed setup operations (install, read, compare).
+ * Refuses if the destination is a symlink or lies outside the specified scope root,
+ * or if any ancestor component within the scope is a symlink.
+ *
+ * This guard prevents symlink attacks that would redirect reads, backups, and writes outside
+ * the managed tree. Separates two concerns:
+ * 1. CONTAINMENT: Uses realpath (follows symlinks) to detect OS-level symlinks and verify
+ *    destination is within scope, handling cases like /tmp -> /private/tmp on macOS.
+ * 2. SYMLINK GUARD: Uses lstat to reject if any path component strictly BELOW the scope root
+ *    is itself a symlink, preventing symlink attacks within the managed scope.
+ *
+ * Never rejects OS-level symlinks above the managed scope (e.g., /var, /tmp on macOS).
+ *
+ * MUST be called BEFORE reading/comparing contents and BEFORE mkdir of any intermediate dir.
+ * It is the single authoritative source of symlink validation for all managed scope writes.
+ *
+ * Addresses Codex findings:
+ * - 4351464979: validate before compare (filesDiffer) ✓
+ * - 4351464989: validate before compare (readFile) ✓
+ * - 4351560195: respects CODEX_HOME via codexHome() ✓
+ * - 4351560207: validate before compare ✓
+ * - 4351560219: validate before mkdir ✓
+ * - 4352912480: canonicalizes through OS-level symlinks in ancestors ✓
+ * - 4352912502: validates against override root ✓
+ */
+async function assertManagedDestination(
+	destinationPath: string,
+	scopeRoot: string,
+): Promise<void> {
+	// Resolve paths to absolute forms
+	const absolutePath = isAbsolute(destinationPath) ? destinationPath : join(process.cwd(), destinationPath);
+	const absoluteScopeRoot = isAbsolute(scopeRoot) ? scopeRoot : join(process.cwd(), scopeRoot);
+	
+	// SYMLINK GUARD (check first): Reject if any path component strictly BELOW the scope root is a symlink.
+	// Walk the LEXICAL path components from relative(scopeRoot, dest) to detect symlinks within scope.
+	// Use the original input paths in error messages for user clarity.
+	const relativePathFromScope = relative(absoluteScopeRoot, absolutePath);
+	if (relativePathFromScope && relativePathFromScope !== '.') {
+		// Split into components and walk from scope root down to destination
+		const pathComponents = relativePathFromScope.split(sep);
+		let currentCheckPath = absoluteScopeRoot;
+		
+		for (const component of pathComponents) {
+			currentCheckPath = join(currentCheckPath, component);
+			
+			try {
+				const stats = await lstat(currentCheckPath);
+				if (stats.isSymbolicLink()) {
+					// Use the original input path for error message clarity
+					const msg =
+						`Refusing to install through symlink ${destinationPath}. ` +
+						`Either remove the symlink (rm ${destinationPath}), ` +
+						`or move the target to the expected location before running setup again.`;
+					throw new Error(msg);
+				}
+			} catch (error) {
+				// If component doesn't exist yet, that's fine; we'll create it during mkdir
+				// Just make sure we're not getting a different error
+				if (!isMissingPathError(error)) {
+					// Re-throw symlink errors and other unexpected errors
+					if (error instanceof Error && error.message.includes('Refusing to install through symlink')) {
+						throw error;
+					}
+					throw error;
+				}
+			}
+		}
+	}
+	
+	// CONTAINMENT CHECK: Canonicalize both paths using realpath (follows symlinks)
+	// to handle OS-level symlinks like /tmp -> /private/tmp on macOS.
+	const canonicalDestPath = await canonicalizePathToRealForm(absolutePath);
+	const canonicalScopeRoot = await canonicalizePathToRealForm(absoluteScopeRoot);
+	
+	// Verify destination is within the managed scope
+	const relFromScope = relative(canonicalScopeRoot, canonicalDestPath);
+	if (relFromScope === '..' || relFromScope.startsWith(`..${sep}`)) {
+		throw new Error(
+			`Destination ${absolutePath} is outside managed scope ${canonicalScopeRoot}.`,
+		);
+	}
+}
+
+
 
 /**
  * Determine the validation scope root for a destination based on its location.
@@ -2365,17 +2331,17 @@ async function getValidationScopeRoot(destinationPath: string): Promise<string> 
 	const projectCodexHome = join(projectRoot, ".codex");
 	
 	// Canonicalize both paths to handle symlinks consistently
-	const realDestPath = await canonicalizePathToDeepestExistingAncestor(absPath);
-	const realCodexHome = await canonicalizePathToDeepestExistingAncestor(
+	const realDestPath = await canonicalizePathToRealForm(absPath);
+	const realCodexHome = await canonicalizePathToRealForm(
 		isAbsolute(codexHomeDir) ? codexHomeDir : join(process.cwd(), codexHomeDir)
 	);
-	const realProjectCodexHome = await canonicalizePathToDeepestExistingAncestor(projectCodexHome);
-	const realProjectRoot = await canonicalizePathToDeepestExistingAncestor(projectRoot);
+	const realProjectCodexHome = await canonicalizePathToRealForm(projectCodexHome);
+	const realProjectRoot = await canonicalizePathToRealForm(projectRoot);
 
 	// Check OMX_ROOT override first (#4352912502)
 	const omxRoot = process.env.OMX_ROOT;
 	if (omxRoot) {
-		const realOmxRoot = await canonicalizePathToDeepestExistingAncestor(
+		const realOmxRoot = await canonicalizePathToRealForm(
 			isAbsolute(omxRoot) ? omxRoot : join(process.cwd(), omxRoot)
 		);
 		if (realDestPath.startsWith(realOmxRoot + sep) || realDestPath === realOmxRoot) {
@@ -2592,25 +2558,48 @@ function installedSkillReceiptPath(scope: SetupScope, projectRoot: string): stri
   return join(authorityRoot, ".omx", "state", "setup", "installed-skills.json");
 }
 
-async function readInstalledSkillReceipt(receiptPath: string): Promise<InstalledSkillReceipt> {
-  try {
-    const parsed = JSON.parse(
-      await readFile(receiptPath, "utf-8"),
-    ) as InstalledSkillReceipt;
-    if (parsed?.version === 1 && parsed.skills && typeof parsed.skills === "object") {
-      // Re-key through a prototype-less record so a `__proto__` entry in a persisted receipt is a
-      // real own property on both sides of the comparison.
-      const skills: InstalledSkillReceipt["skills"] = Object.create(null);
-      for (const [name, entry] of Object.entries(parsed.skills)) {
-        const files: Record<string, string> = Object.create(null) as Record<string, string>;
-        for (const [file, digest] of Object.entries(entry?.files ?? {})) files[file] = String(digest);
-        skills[name] = { files };
+async function readInstalledSkillReceipt(receiptPath: string, legacyReceiptPath?: string): Promise<InstalledSkillReceipt> {
+  const parseReceipt = (content: string): InstalledSkillReceipt | null => {
+    try {
+      const parsed = JSON.parse(content) as InstalledSkillReceipt;
+      if (parsed?.version === 1 && parsed.skills && typeof parsed.skills === "object") {
+        // Re-key through a prototype-less record so a `__proto__` entry in a persisted receipt is a
+        // real own property on both sides of the comparison.
+        const skills: InstalledSkillReceipt["skills"] = Object.create(null);
+        for (const [name, entry] of Object.entries(parsed.skills)) {
+          const files: Record<string, string> = Object.create(null) as Record<string, string>;
+          for (const [file, digest] of Object.entries(entry?.files ?? {})) files[file] = String(digest);
+          skills[name] = { files };
+        }
+        return { version: 1, skills };
       }
-      return { version: 1, skills };
+    } catch {
+      // Invalid or malformed receipt
     }
+    return null;
+  };
+
+  // Try reading from the new receipt path first
+  try {
+    const content = await readFile(receiptPath, "utf-8");
+    const parsed = parseReceipt(content);
+    if (parsed) return parsed;
   } catch {
-    // A missing or unreadable receipt means "no proof of ownership", which retains conservatively.
+    // New receipt does not exist or is unreadable; try legacy path
   }
+
+  // Try reading from the legacy receipt path if provided
+  if (legacyReceiptPath) {
+    try {
+      const content = await readFile(legacyReceiptPath, "utf-8");
+      const parsed = parseReceipt(content);
+      if (parsed) return parsed;
+    } catch {
+      // Legacy receipt does not exist or is unreadable
+    }
+  }
+
+  // No valid receipt found; return empty receipt
   return { version: 1, skills: Object.create(null) as InstalledSkillReceipt["skills"] };
 }
 
@@ -2650,8 +2639,9 @@ async function isUnmodifiedRecordedInstall(
   receiptPath: string,
   skillName: string,
   skillDir: string,
+  legacyReceiptPath?: string,
 ): Promise<boolean> {
-  const receipt = await readInstalledSkillReceipt(receiptPath);
+  const receipt = await readInstalledSkillReceipt(receiptPath, legacyReceiptPath);
   const recorded = receipt.skills[skillName]?.files;
   if (!recorded || Object.keys(recorded).length === 0) return false;
   let current: Record<string, string>;
@@ -4564,6 +4554,8 @@ export async function setup(options: SetupOptions = {}): Promise<void> {
 		resolvedScope.source === "persisted" ? " (from .omx/setup-scope.json)" : "";
 	const backupContext = getBackupContext(resolvedScope.scope, projectRoot);
 	const skillReceiptPath = installedSkillReceiptPath(resolvedScope.scope, projectRoot);
+	// For user scope, compute the legacy receipt path at $HOME/.omx/state/setup/installed-skills.json
+	const legacySkillReceiptPath = resolvedScope.scope === "user" ? join(homedir(), ".omx", "state", "setup", "installed-skills.json") : undefined;
 	const isPluginInstallMode = resolvedInstallMode?.installMode === "plugin";
 	if (repairPluginCache && !isPluginInstallMode) {
 		throw new Error("--repair-plugin-cache requires plugin setup mode; add --plugin.");
@@ -4842,7 +4834,7 @@ export async function setup(options: SetupOptions = {}): Promise<void> {
 				skillsSrc,
 				skillsDst,
 				backupContext,
-				{ dryRun, verbose, skillReceiptPath },
+				{ dryRun, verbose, skillReceiptPath, legacySkillReceiptPath },
 			);
 			summary.skills.backedUp += cleanup.backedUp;
 			summary.skills.removed += cleanup.removedSkillNames.length;
@@ -6468,7 +6460,7 @@ async function cleanupLegacyManagedSkills(
 	srcDir: string,
 	dstDir: string,
 	backupContext: SetupBackupContext,
-	options: Pick<SetupOptions, "dryRun" | "verbose" | "skillReceiptPath">,
+	options: Pick<SetupOptions, "dryRun" | "verbose" | "skillReceiptPath"> & { legacySkillReceiptPath?: string },
 ): Promise<LegacySkillCleanupResult> {
 	const result: LegacySkillCleanupResult = {
 		backedUp: 0,
@@ -6508,7 +6500,7 @@ async function cleanupLegacyManagedSkills(
 		// A matching SKILL.md does not prove the whole directory is ours: a user file sitting beside it
 		// would be deleted with the directory. Require the same unmodified-install proof the ordinary
 		// retirement sweep uses.
-		if (!options.skillReceiptPath || !(await isUnmodifiedRecordedInstall(options.skillReceiptPath, skillName, installedSkillDir))) {
+		if (!options.skillReceiptPath || !(await isUnmodifiedRecordedInstall(options.skillReceiptPath, skillName, installedSkillDir, options.legacySkillReceiptPath))) {
 			const warning = `Skipping legacy skill cleanup for ${skillName}: directory contents are not a receipted unmodified OMX install.`;
 			result.skippedSkillNames.push(skillName);
 			result.warnings.push(warning);
@@ -6534,7 +6526,7 @@ async function cleanupLegacyManagedSkills(
 		const installedSkillDir = join(dstDir, entry.name);
 		if (!(await isOmxManagedInstalledSkillDir(installedSkillDir))) continue;
 		// The badge alone is not proof of ownership for deletion; a user-edited body keeps it.
-		if (!options.skillReceiptPath || !(await isUnmodifiedRecordedInstall(options.skillReceiptPath, entry.name, installedSkillDir))) {
+		if (!options.skillReceiptPath || !(await isUnmodifiedRecordedInstall(options.skillReceiptPath, entry.name, installedSkillDir, options.legacySkillReceiptPath))) {
 			result.skippedSkillNames.push(entry.name);
 			result.warnings.push(
 				`Skipping retired skill ${entry.name}: modified since install, or installed before receipts existed.`,
