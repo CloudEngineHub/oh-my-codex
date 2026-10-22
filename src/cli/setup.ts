@@ -2237,32 +2237,10 @@ async function assertManagedDestination(
 	}
 	
 	// Canonicalize destination path the same way as scope root:
-	// realpath the deepest existing ancestor and re-append the non-existent tail.
+	// realpath the deepest existing ancestor and re-append the non-existent tail,
+	// but avoid following symlinks in the destination path itself.
 	// This ensures consistent handling of OS-level symlinks in ancestors.
-	let realDestinationPath: string = absolutePath;
-	let currentCanonicalPath = absolutePath;
-	while (currentCanonicalPath && currentCanonicalPath !== dirname(currentCanonicalPath)) {
-		try {
-			// Try to realpath the current path
-			realDestinationPath = await realpath(currentCanonicalPath);
-			// Successfully realpathhed; now append the remaining tail
-			const tail = absolutePath.slice(currentCanonicalPath.length);
-			realDestinationPath = tail ? join(realDestinationPath, tail) : realDestinationPath;
-			break;
-		} catch (error) {
-			if (isMissingPathError(error)) {
-				// This component doesn't exist; try its parent
-				currentCanonicalPath = dirname(currentCanonicalPath);
-				if (currentCanonicalPath === dirname(currentCanonicalPath)) {
-					// Reached the filesystem root; use absolute path as-is
-					realDestinationPath = absolutePath;
-					break;
-				}
-			} else {
-				throw error;
-			}
-		}
-	}
+	const realDestinationPath = await canonicalizePathToDeepestExistingAncestor(absolutePath);
 	
 	// Verify destination is within the managed scope by checking relative path.
 	// Using realDestinationPath and realScopeRoot ensures consistent handling of symlinks.
@@ -2337,7 +2315,19 @@ async function canonicalizePathToDeepestExistingAncestor(absolutePath: string): 
 	let currentPath = absolutePath;
 	while (currentPath && currentPath !== dirname(currentPath)) {
 		try {
-			// Try to realpath the current path
+			// Check if this component is a symlink using lstat (doesn't follow symlinks)
+			const stats = await lstat(currentPath);
+			if (stats.isSymbolicLink()) {
+				// This component is a symlink; don't follow it, move to parent
+				currentPath = dirname(currentPath);
+				if (currentPath === dirname(currentPath)) {
+					// Reached the filesystem root; use absolute path as-is
+					realPath = absolutePath;
+					break;
+				}
+				continue;
+			}
+			// Not a symlink; realpath it to handle OS-level symlinks in ancestors
 			realPath = await realpath(currentPath);
 			// Successfully realpathhed; now append the remaining tail
 			const tail = absolutePath.slice(currentPath.length);
@@ -2381,8 +2371,7 @@ async function getValidationScopeRoot(destinationPath: string): Promise<string> 
 	);
 	const realProjectCodexHome = await canonicalizePathToDeepestExistingAncestor(projectCodexHome);
 	const realProjectRoot = await canonicalizePathToDeepestExistingAncestor(projectRoot);
-	const realHome = await canonicalizePathToDeepestExistingAncestor(homedir());
-	
+
 	// Check OMX_ROOT override first (#4352912502)
 	const omxRoot = process.env.OMX_ROOT;
 	if (omxRoot) {
@@ -4375,7 +4364,8 @@ export async function setup(options: SetupOptions = {}): Promise<void> {
 	if (!dryRun) {
 		const omxPath = join(projectRoot, ".omx");
 		try {
-			await assertManagedDestination(omxPath, projectRoot);
+			const omxScopeRoot = await getValidationScopeRoot(omxPath);
+			await assertManagedDestination(omxPath, omxScopeRoot);
 		} catch (error) {
 			// Missing .omx is fine, but symlinks must be refused
 			if (error instanceof Error && error.message.includes("Refusing to install through symlink")) {
@@ -4743,10 +4733,12 @@ export async function setup(options: SetupOptions = {}): Promise<void> {
 		if (verbose) console.log(`  mkdir ${dir}`);
 	}
 
-	// Validate and create project-scope directories against project authority root
+	// Validate and create project-scope directories against appropriate authority root
+	// (projectRoot for normal files, OMX_ROOT if set for .omx/* paths)
 	for (const dir of projectScopeDirs) {
 		if (!dryRun) {
-			await assertManagedDestination(dir, projectRoot);
+			const dirScopeRoot = await getValidationScopeRoot(dir);
+			await assertManagedDestination(dir, dirScopeRoot);
 			await mkdir(dir, { recursive: true });
 		}
 		if (verbose) console.log(`  mkdir ${dir}`);
@@ -5471,6 +5463,7 @@ export async function setup(options: SetupOptions = {}): Promise<void> {
 	if (force || !existsSync(hudConfigPath)) {
 		if (!dryRun) {
 			const defaultHudConfig = { preset: "focused" };
+			await mkdir(dirname(hudConfigPath), { recursive: true });
 			await writeFile(hudConfigPath, JSON.stringify(defaultHudConfig, null, 2));
 		}
 		if (verbose) console.log("  Wrote .omx/hud-config.json");
@@ -6443,12 +6436,10 @@ async function removeDirectoryCopyAware(
 	const destinationExists = existsSync(sourceDir);
 	if (!destinationExists) return false;
 
-	// Determine the scope root based on source directory location
-	const scopeRoot = await getValidationScopeRoot(sourceDir);
-	const relativePath = relative(scopeRoot, sourceDir);
+	const relativePath = relative(backupContext.baseRoot, sourceDir);
 	const safeRelativePath =
-		relativePath.startsWith("..") || relativePath === ""
-			? sourceDir.replace(/^[/]+/, "")
+		relativePath.startsWith(".." ) || relativePath === ""
+			? sourceDir.replace(/^[\/]+/, "")
 			: relativePath;
 	const backupPath = join(backupContext.backupRoot, safeRelativePath);
 
