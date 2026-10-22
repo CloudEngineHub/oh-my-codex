@@ -2193,8 +2193,6 @@ async function commitNativeHookTransaction(
  * without following symlinks, not just the leaf destination.
  */
 async function assertNoSymlinkDestination(destinationPath: string): Promise<void> {
-	const { dirname } = await import('path');
-	
 	// Check each component of the path from the destination up to the root
 	let currentPath = destinationPath;
 	const visited = new Set<string>();
