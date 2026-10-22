@@ -2278,17 +2278,6 @@ async function assertManagedDestination(
 	}
 }
 
-/**
- * Deprecated: use assertManagedDestination instead.
- * Kept for backward compatibility during transition.
- */
-async function assertNoSymlinkDestination(
-	destinationPath: string,
-	scopeRoot: string,
-): Promise<void> {
-	return assertManagedDestination(destinationPath, scopeRoot);
-}
-
 async function ensureBackup(
 	destinationPath: string,
 	contentChanged: boolean,
