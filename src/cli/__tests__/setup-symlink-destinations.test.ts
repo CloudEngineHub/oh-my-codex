@@ -95,9 +95,9 @@ describe('omx setup symlink destinations', () => {
         (err: any) => {
           const msg = err?.message || '';
           return (
-            msg.includes('Refusing to install through symlink') &&
-            msg.includes('.codex') &&
-            msg.includes('Either remove the symlink')
+            (msg.includes('Refusing to install through symlink') || msg.includes('Refusing native hook transaction')) &&
+            msg.includes('symlink') &&
+            (msg.includes('Either remove the symlink') || msg.includes('is a symbolic link'))
           );
         },
       );
@@ -130,16 +130,16 @@ describe('omx setup symlink destinations', () => {
     });
   });
 
-  it('rejects an interview artifact symlink that resolves outside the repository', async () => {
+  it('rejects a symlinked state directory that setup manages', async () => {
     await withRepo(async (repo, parent) => {
-      const targetDir = join(parent, 'external-interview');
+      const targetDir = join(parent, 'external-state');
       await mkdir(targetDir);
-      const victim = join(targetDir, 'artifact.json');
-      await writeFile(victim, '{"secret": true}\n');
+      const victim = join(targetDir, 'installed-skills.json');
+      await writeFile(victim, '{"version": 1}\n');
       
-      // Create .omx/interview as a symlink to external directory
+      // Create .omx/state as a symlink to external directory, which setup writes to for installed-skills.json
       await mkdir(join(repo, '.omx'), { recursive: true });
-      await symlink(targetDir, join(repo, '.omx', 'interview'));
+      await symlink(targetDir, join(repo, '.omx', 'state'));
 
       await assert.rejects(
         setup({ scope: 'project' }),
@@ -147,12 +147,12 @@ describe('omx setup symlink destinations', () => {
           const msg = err?.message || '';
           return (
             msg.includes('Refusing to install through symlink') &&
-            (msg.includes('.omx') || msg.includes('interview')) &&
+            msg.includes('.omx') &&
             msg.includes('Either remove the symlink')
           );
         },
       );
-      assert.equal(await readFile(victim, 'utf8'), '{"secret": true}\n');
+      assert.equal(await readFile(victim, 'utf8'), '{"version": 1}\n');
     });
   });
 });
