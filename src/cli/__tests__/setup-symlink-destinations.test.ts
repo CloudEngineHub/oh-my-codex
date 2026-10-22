@@ -234,4 +234,39 @@ describe('omx setup symlink destinations', () => {
       assert(existsSync(join(repo, '.codex', 'config.toml')), 'config.toml should be created');
     });
   });
+
+  it('succeeds with custom CODEX_HOME and validates files within CODEX_HOME scope', async () => {
+    // Regression test for #3889: When CODEX_HOME is set to a custom directory,
+    // setup should validate all user-scope files within the CODEX_HOME boundary.
+    // This tests that CODEX_HOME is used as the managed authority root.
+    await withRepo(async (repo, parent) => {
+      // Create a custom CODEX_HOME directory
+      const customCodexHome = join(parent, 'custom-codex');
+      await mkdir(customCodexHome, { recursive: true });
+      
+      // Override CODEX_HOME to the custom location
+      const previousCodexHome = process.env.CODEX_HOME;
+      process.env.CODEX_HOME = customCodexHome;
+      
+      try {
+        // Setup with user scope should succeed and use customCodexHome as authority root
+        await assert.doesNotReject(
+          setup({ scope: 'user' }),
+          'Setup should succeed with custom CODEX_HOME'
+        );
+        
+        // Verify config was created in custom CODEX_HOME
+        assert(
+          existsSync(join(customCodexHome, 'config.toml')),
+          'config.toml should be created in custom CODEX_HOME'
+        );
+      } finally {
+        if (typeof previousCodexHome === 'string') {
+          process.env.CODEX_HOME = previousCodexHome;
+        } else {
+          delete process.env.CODEX_HOME;
+        }
+      }
+    });
+  });
 });

@@ -492,9 +492,13 @@ function getBackupContext(
 			baseRoot: projectRoot,
 		};
 	}
+	// For user scope, use CODEX_HOME as the managed authority root, not the user's home directory.
+	// This ensures that all user-scope managed files (including .omx state) are validated and
+	// confined within the configured CODEX_HOME, which may differ from the home directory.
+	const codexHomeDir = codexHome();
 	return {
-		backupRoot: join(homedir(), ".omx", "backups", "setup", timestamp),
-		baseRoot: homedir(),
+		backupRoot: join(codexHomeDir, ".omx", "backups", "setup", timestamp),
+		baseRoot: codexHomeDir,
 	};
 }
 
@@ -2231,9 +2235,37 @@ async function assertManagedDestination(
 		}
 	}
 	
+	// Canonicalize destination path the same way as scope root:
+	// realpath the deepest existing ancestor and re-append the non-existent tail.
+	// This ensures consistent handling of OS-level symlinks in ancestors.
+	let realDestinationPath: string = absolutePath;
+	let currentCanonicalPath = absolutePath;
+	while (currentCanonicalPath && currentCanonicalPath !== dirname(currentCanonicalPath)) {
+		try {
+			// Try to realpath the current path
+			realDestinationPath = await realpath(currentCanonicalPath);
+			// Successfully realpathhed; now append the remaining tail
+			const tail = absolutePath.slice(currentCanonicalPath.length);
+			realDestinationPath = tail ? join(realDestinationPath, tail) : realDestinationPath;
+			break;
+		} catch (error) {
+			if (isMissingPathError(error)) {
+				// This component doesn't exist; try its parent
+				currentCanonicalPath = dirname(currentCanonicalPath);
+				if (currentCanonicalPath === dirname(currentCanonicalPath)) {
+					// Reached the filesystem root; use absolute path as-is
+					realDestinationPath = absolutePath;
+					break;
+				}
+			} else {
+				throw error;
+			}
+		}
+	}
+	
 	// Verify destination is within the managed scope by checking relative path.
-	// Using realScopeRoot ensures we detect when symlinks in ancestors would escape the scope.
-	const relFromScope = relative(realScopeRoot, absolutePath);
+	// Using realDestinationPath and realScopeRoot ensures consistent handling of symlinks.
+	const relFromScope = relative(realScopeRoot, realDestinationPath);
 	if (relFromScope === '..' || relFromScope.startsWith(`..${sep}`)) {
 		throw new Error(
 			`Destination ${absolutePath} is outside managed scope ${realScopeRoot}.`,
@@ -2250,8 +2282,22 @@ async function assertManagedDestination(
 		if (visited.has(currentPath)) break; // Avoid infinite loops
 		visited.add(currentPath);
 		
-		// Stop before checking ancestors beyond the scope root
-		if (currentPath === realScopeRoot) break;
+		// Stop before checking ancestors beyond the scope root.
+		// Compare the realpath of currentPath with realScopeRoot to handle
+		// OS-level symlinks correctly.
+		let currentRealPath: string;
+		try {
+			currentRealPath = await realpath(currentPath);
+		} catch (error) {
+			if (isMissingPathError(error)) {
+				// Path doesn't exist yet, move to parent
+				currentPath = dirname(currentPath);
+				continue;
+			}
+			throw error;
+		}
+		
+		if (currentRealPath === realScopeRoot) break;
 		
 		// Check if this path component is a symlink (using lstat, not stat)
 		let stats: Stats;
@@ -2460,7 +2506,8 @@ interface InstalledSkillReceipt {
 }
 
 function installedSkillReceiptPath(scope: SetupScope, projectRoot: string): string {
-  const authorityRoot = scope === "project" ? projectRoot : homedir();
+  // For user scope, use CODEX_HOME as the managed authority root, not the user's home directory.
+  const authorityRoot = scope === "project" ? projectRoot : codexHome();
   return join(authorityRoot, ".omx", "state", "setup", "installed-skills.json");
 }
 
