@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.31] - 2026-10-22
+
+Patch release for setup symlink safety and dispatch read reliability (PRs #3881, #3883).
+
+### Fixed
+
+- Refuse symlinked managed destinations in `omx setup`, preventing unintended writes outside the repository when a committed `.gitignore` or prompt path is a symlink (#3881, @shenyankm).
+- Unified setup symlink guard: single authoritative helper validates all managed scope writes before reading/comparing and before mkdir operations (#3887).
+- Fix dispatch read failures by improving state machine transitions in delivery-recovery (#3883, @shenyankm).
+- Correct test hook timing to run after mailbox discovery instead of before, ensuring comprehensive test coverage of dispatch race conditions (#3883, @shenyankm).
+
+Full inventory, contributors, compatibility notes, and verification: [release notes](docs/release-notes-0.21.31.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.30...v0.21.31
+
 ## [0.21.30] - 2026-10-22
 
 Patch release for Team monitor-path dispatch serialization (4 commits, 10 files, +324/−78; PRs #3879, #3880, #3882).
