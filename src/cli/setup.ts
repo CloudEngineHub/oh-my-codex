@@ -4217,6 +4217,29 @@ export async function setup(options: SetupOptions = {}): Promise<void> {
 	} = options;
 	const pkgRoot = getPackageRoot();
 	const projectRoot = process.cwd();
+	
+	// Validate .omx is never a symlink before any operations touch it
+	if (!dryRun) {
+		const omxPath = join(projectRoot, ".omx");
+		try {
+			const stat = await lstat(omxPath);
+			if (stat.isSymbolicLink()) {
+				const msg =
+					`Refusing to install through symlink ${omxPath}. ` +
+					`Either remove the symlink (rm ${omxPath}), ` +
+					`or move the target to the expected location before running setup again.`;
+				throw new Error(msg);
+			}
+		} catch (error) {
+			if (error instanceof Error && error.message.includes("Refusing to install through symlink")) {
+				throw error;
+			}
+			// .omx doesn't exist yet, which is fine
+			if (!isMissingPathError(error)) {
+				throw error;
+			}
+		}
+	}
 	const persistedPreferences = await readPersistedSetupPreferences(
 		projectRoot,
 		{ warnOnLegacyScope: true },

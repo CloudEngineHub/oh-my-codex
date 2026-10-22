@@ -157,6 +157,31 @@ describe('omx setup symlink destinations', () => {
     });
   });
 
+  it('rejects a symlinked .omx directory even when hud-config.json would already exist', async () => {
+    await withRepo(async (repo, parent) => {
+      const targetDir = join(parent, 'external-omx');
+      await mkdir(targetDir);
+      // Create hud-config.json in the target so that the old code would skip validation
+      await mkdir(join(targetDir), { recursive: true });
+      await writeFile(join(targetDir, 'hud-config.json'), '{"preset": "focused"}\n');
+      
+      // Create .omx as a symlink to external directory
+      await symlink(targetDir, join(repo, '.omx'));
+
+      await assert.rejects(
+        setup({ scope: 'project' }),
+        (err: any) => {
+          const msg = err?.message || '';
+          return (
+            msg.includes('Refusing to install through symlink') &&
+            msg.includes('.omx') &&
+            msg.includes('Either remove the symlink')
+          );
+        },
+      );
+    });
+  });
+
   it('succeeds when scope root is under a symlinked parent (like /tmp on macOS) while still rejecting symlinks inside the managed tree', async () => {
     // Regression test for issue #3887: On macOS, /tmp is a symlink to /private/tmp,
     // so the setup should not reject paths just because they're under /tmp,
