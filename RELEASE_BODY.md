@@ -1,40 +1,40 @@
-# oh-my-codex 0.21.29
+# oh-my-codex 0.21.30
 
-`0.21.29` is a patch release for Team dispatch state recovery and Codex startup UI protection (1 commit, 16 files, +616/−68; PR #3876).
+`0.21.30` is a patch release for Team monitor-path dispatch serialization (4 commits, 10 files, +324/−78; PRs #3879, #3880, #3882).
 
 ## Highlights
 
-- **Team dispatch state recovery and startup UI protection (#3876):** This release fixes three related regressions that can occur under dispatch retry and multiple-message scenarios:
-  - **Dispatch retry correctness:** A runtime dispatch event can commit before its JSON projection is published. Retrying against an empty, missing, or stale projection can duplicate a request, coalesce into an already delivered request, or leave requests behind during worker retirement. The fix ensures dispatch retries use consistent, durable projections.
-  - **Mailbox wake handling:** Multiple mailbox messages can share one wake condition. Acknowledging the wake's original message before other messages are delivered can leave the wake active after the mailbox is fully delivered, preventing further message processing. The fix ensures wake acknowledgment only after all messages from that wake are complete.
-  - **Damaged mailbox recovery:** A damaged or unreadable per-worker mailbox was previously treated as empty, allowing a later send to recreate it with inconsistent state. The fix treats damaged mailboxes as undeliverable, preventing silent message loss and worker proliferation.
-  - **Codex startup UI safety:** Inbox/notification text can be injected into Codex startup or folder-trust screens, disrupting the initial prompt. The fix prevents notification payload from being rendered during Codex startup and folder-trust UI phases.
-  - **Readiness record accuracy:** The Codex startup screen and folder-trust screen are no longer misidentified as a ready prompt, improving diagnostics and state tracking.
+- **Team monitor-path dispatch serialization (#3879, #3880, #3882):** The v0.21.29 release fixed dispatch retry consistency, mailbox wake acknowledgment, and damaged mailbox recovery for the primary dispatch path. This release extends those same fixes to the secondary monitor-path delivery route (`monitorTeam` → `deliverPendingMailboxMessages` → `dispatchPendingMailboxMessage`):
+  - **Monitor-path wake serialization (#3879):** Monitor-created wake conditions now participate in the same serialization barrier applied to acknowledgments, ensuring that wake acknowledgment only occurs after all messages from that wake are complete.
+  - **Monitor-path acknowledgement race fix (#3880):** Resolves a race condition in the monitor path where mailbox acknowledgements can race with dispatch, leaving messages undelivered. The fix ensures dispatch requests are enqueued inside the serialization barrier with final re-validation.
+  - **Stale notification skipping and proof (#3882):** Implements stale monitor notification detection and skipping, with comprehensive test coverage proving the race condition is resolved across both primary and monitor paths.
 
 ## Compatibility
 
-- No breaking API changes; all fixes are internal recovery and UI isolation improvements.
-- Existing sessions and dispatch workflows remain unaffected; recovery is transparent.
-- Codex startup and folder-trust workflows are now more robust against concurrent notifications.
+- No breaking API changes; all fixes are internal serialization improvements.
+- Existing sessions and Team dispatch workflows remain unaffected; recovery is transparent.
+- Monitor-based event delivery is now consistent with primary dispatch retry paths.
 
 ## Validation
 
-- Pinned candidate `71029cdfc80946da1e0b6770d47e31aae38cf5ab` passed latest-per-name dev CI: 17 checks succeeded and 8 conditional checks were skipped, with no failures (run #39737386059, concluded 07:19Z).
+- Pinned candidate `0ec816c21af5cacfcd2f013124fce1b11127c39a` passed latest-per-name dev CI: 17 checks succeeded and 8 conditional checks were skipped, with no failures (verified at 12:17Z on 2026-10-22).
 - Release branch CI passed with all required checks green.
 - All code review findings addressed.
-- Known gap: Codex review not completed due to usage limit constraints, but validated through code review and green CI gate.
+- Local gates pass: build, typecheck, and lint.
 
 ## Merged PR inventory
 
 | PR | Author | Title |
 |---|---|---|
-| [#3876](https://github.com/Yeachan-Heo/oh-my-codex/pull/3876) | @shenyankm | fix(team): recover dispatch state and guard startup input |
+| [#3879](https://github.com/Yeachan-Heo/oh-my-codex/pull/3879) | @shenyankm | fix(team): serialize monitor-created wakes with acknowledgements |
+| [#3880](https://github.com/Yeachan-Heo/oh-my-codex/pull/3880) | @shenyankm | fix(team): close ack race in monitor mailbox delivery (#3879, #3877) |
+| [#3882](https://github.com/Yeachan-Heo/oh-my-codex/pull/3882) | @shenyankm | fix(team): skip stale monitor notifications after acknowledgement and prove the race fix |
 
 ## Contributors
 
-Thanks to @shenyankm for the Team dispatch recovery and Codex startup safety fixes.
+Thanks to @shenyankm for the monitor-path dispatch serialization fixes.
 
-**Full Changelog**: [`v0.21.28...v0.21.29`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.28...v0.21.29)
+**Full Changelog**: [`v0.21.29...v0.21.30`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.29...v0.21.30)
 
 —
 *[repo owner's gaebal-gajae (clawdbot) 🦞]*
