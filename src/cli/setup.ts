@@ -2200,6 +2200,13 @@ async function commitNativeHookTransaction(
  *
  * MUST be called BEFORE reading/comparing contents and BEFORE mkdir of any intermediate dir.
  * It is the single authoritative source of symlink validation for all managed scope writes.
+ *
+ * Addresses Codex findings:
+ * - 4351464979: validate before compare (filesDiffer) ✓
+ * - 4351464989: validate before compare (readFile) ✓
+ * - 4351560195: respects CODEX_HOME via codexHome() ✓
+ * - 4351560207: validate before compare ✓
+ * - 4351560219: validate before mkdir ✓
  */
 async function assertManagedDestination(
 	destinationPath: string,
