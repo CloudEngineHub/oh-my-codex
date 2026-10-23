@@ -1,10 +1,10 @@
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 
 
 import { join, resolve, dirname } from 'path';
 import { existsSync, appendFileSync, mkdirSync, readFileSync } from 'fs';
 
-import { mkdir, readdir, readFile, writeFile } from 'fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile, lstat, link, rename } from 'fs/promises';
 import { performance } from 'perf_hooks';
 import { spawn, spawnSync, type ChildProcessByStdio } from 'child_process';
 import type { Writable } from 'stream';
@@ -200,6 +200,7 @@ import {
   planWorktreeTarget,
   removeWorktreeForce,
   rollbackProvisionedWorktrees,
+  replaySubmoduleRecovery,
   type EnsureWorktreeResult,
   type WorktreeMode,
 } from './worktree.js';
@@ -363,6 +364,9 @@ async function mutateShutdownConfig(
         oldBytes: currentManifestBytes,
         newBytes: currentManifest === null ? null : JSON.stringify({
           ...currentManifest,
+          // The v2 manifest is what readTeamConfig returns, so worker pane/pid
+          // changes made by a shutdown mutation must land there too.
+          workers: current.workers,
           hud_pane_id: current.hud_pane_id,
           hud_pane_pid: current.hud_pane_pid,
           resize_hook_name: current.resize_hook_name,
@@ -841,8 +845,7 @@ async function convergeDetachedSessionDestroyReceiptUnlocked(teamName: string, c
   if (query.status === 'absent') {
     if (config) {
       validateDetachedReceiptConfig(teamName, cwd, config, receipt);
-      config.tmux_session = '';
-      await saveTeamConfig(config, cwd);
+      // Keep the receipt-bound config unchanged until terminal state cleanup.
     } else if (receipt.status !== 'accepted') {
       throw new Error(`detached_session_destroy_authorization_unavailable:${receipt.session_name}`);
     }
@@ -1672,6 +1675,117 @@ function renderWorktreeMergeReport(report: WorkerShutdownMergeReport): string {
   return lines.join('\n');
 }
 
+async function shutdownReportPaths(repoRoot: string, worktreePath: string): Promise<{ report: string; receipt: string }> {
+  const report = join(worktreePath, '.omx', 'diff.md');
+  for (const path of [dirname(report), report]) {
+    const stat = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (stat && (stat.isSymbolicLink() || (path === report ? !stat.isFile() : !stat.isDirectory()))) {
+      throw new Error(`shutdown_report_unsafe_path:${path}`);
+    }
+  }
+  const gitPath = runGitCommand(repoRoot, ['rev-parse', '--git-path', 'omx-shutdown-report.sha256'], worktreePath);
+  if (!gitPath.ok || !gitPath.stdout) throw new Error(`shutdown_report_receipt_path_failed:${worktreePath}`);
+  return { report, receipt: resolve(worktreePath, gitPath.stdout) };
+}
+
+// Check if a report file is tracked in HEAD, handling case-variant paths on case-insensitive filesystems (P2 4359325739).
+async function isReportTrackedInHead(repoRoot: string, worktreePath: string): Promise<boolean> {
+  // Use ls-tree to list all tracked files and match case-insensitively.
+  const result = runGitCommand(repoRoot, ['ls-tree', '--name-only', '-r', 'HEAD', '.omx'], worktreePath);
+  if (!result.ok) throw new Error(`worktree_ls_tree_failed:${worktreePath}:${result.stderr}`);
+  if (!result.stdout) return false;
+  // Case-insensitive match for diff.md under .omx directory.
+  return result.stdout.split('\n').some(line => line.toLowerCase() === '.omx/diff.md');
+}
+
+// Check if a report file is tracked in the index, handling case-variant paths on case-insensitive filesystems.
+async function isReportTrackedInIndex(repoRoot: string, worktreePath: string): Promise<boolean> {
+  // Use :(icase) pathspec for case-insensitive matching in ls-files.
+  const result = runGitCommand(repoRoot, ['ls-files', '--', ':(icase).omx/diff.md'], worktreePath);
+  if (!result.ok) throw new Error(`worktree_ls_files_failed:${worktreePath}:${result.stderr}`);
+  return !!result.stdout;
+}
+
+async function removeGeneratedShutdownReport(repoRoot: string, worktreePath: string): Promise<void> {
+  const paths = await shutdownReportPaths(repoRoot, worktreePath);
+  const inHead = await isReportTrackedInHead(repoRoot, worktreePath);
+  if (inHead) return;
+  const receipt = await readFile(paths.receipt, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (!receipt) return;
+  const contents = await readFile(paths.report).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  // Accept legacy hash receipts; new receipts also bind ownership to the published inode.
+  const proof = receipt.trim().startsWith('{') ? JSON.parse(receipt) as { hash: string; dev: number; ino: number } : null;
+  const stat = contents && proof ? await lstat(paths.report) : null;
+  const owned = !proof || (stat?.dev === proof.dev && stat?.ino === proof.ino);
+  if (contents && owned && createHash('sha256').update(contents).digest('hex') === (proof?.hash ?? receipt.trim())) {
+    // Atomically move the report out of the worktree before deletion to prevent race conditions.
+    // If the file is replaced between validation and deletion, we want to delete the object
+    // that was actually validated, not a newly written file.
+    // Use a unique path with high probability of no collision to avoid clobbering user files.
+    const uniqueId = randomBytes(8).toString('hex');
+    const quarantine = `${paths.report}.quarantine-${uniqueId}`;
+    await rename(paths.report, quarantine).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+    // P2 #4364260554: Revalidate the quarantined object before deletion.
+    // A watcher may have replaced the file between the rename and the rm.
+    // Validate the moved file to ensure we delete the expected content, not a replacement.
+    if (existsSync(quarantine) && proof) {
+      try {
+        const movedStat = await lstat(quarantine);
+        const movedContents = await readFile(quarantine);
+        const movedOwned = movedStat.dev === proof.dev && movedStat.ino === proof.ino;
+        const movedHash = createHash('sha256').update(movedContents).digest('hex');
+        // Always delete the quarantine file to keep worktree clean.
+        // Log a warning if the content doesn't match the validated original,
+        // indicating a file replacement between validation and move.
+        if (!movedOwned || movedHash !== proof.hash) {
+          process.stderr.write(`[team/runtime] WARNING: shutdown report content mismatch after move. Expected hash ${proof.hash}, got ${movedHash}. File ownership: expected ino ${proof.ino}, got ${movedStat.ino}. This may indicate file replacement after validation.\n`);
+        }
+      } catch (error) {
+        process.stderr.write(`[team/runtime] failed to validate quarantine ${quarantine}: ${String(error)}\n`);
+      }
+    }
+    // Delete quarantine to keep worktree clean (required for preservation check).
+    // Validation warnings above provide evidence of any unexpected content.
+    await rm(quarantine).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+  }
+}
+
+async function writeShutdownReport(repoRoot: string, worktreePath: string, content: string): Promise<void> {
+  const paths = await shutdownReportPaths(repoRoot, worktreePath);
+  const inHead = await isReportTrackedInHead(repoRoot, worktreePath);
+  const inIndex = await isReportTrackedInIndex(repoRoot, worktreePath);
+  if (inHead || inIndex) return;
+  if (existsSync(paths.report)) return;
+  // Stage outside the checkout, then publish complete bytes only after durable provenance exists.
+  const staged = `${paths.receipt}.content`;
+  await writeAtomic(staged, content);
+  const stat = await lstat(staged);
+  await writeAtomic(paths.receipt, JSON.stringify({
+    hash: createHash('sha256').update(content).digest('hex'), dev: stat.dev, ino: stat.ino,
+  }));
+  await mkdir(dirname(paths.report), { recursive: true });
+  try {
+    // Cross-device links fail closed: the report remains available in Git metadata and stdout.
+    await link(staged, paths.report);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return;
+    throw error;
+  }
+}
+
 async function prepareShutdownMergeReport(
   worker: WorkerInfo,
   leaderCwd: string,
@@ -1682,8 +1796,22 @@ async function prepareShutdownMergeReport(
 
   const worktreePath = resolve(worker.worktree_path);
   const repoRoot = resolve(worker.worktree_repo_root);
+  await removeGeneratedShutdownReport(repoRoot, worktreePath);
+  
+  // Replay any pending submodule recovery journals before any git operations.
+  // If the process was killed after moving submodules but before creating placeholders,
+  // the recovery.json files persist and must be replayed to restore the checkouts.
+  const recoverySucceeded = await replaySubmoduleRecovery(worktreePath, repoRoot).catch((error) => {
+    process.stderr.write(`[team/runtime] submodule recovery failed: ${String(error)}\n`);
+    return false; // Recovery encountered an error
+  });
+  if (!recoverySucceeded) {
+    throw new Error(`submodule_recovery_unresolved:${worktreePath}:aborting shutdown to preserve recovery state`);
+  }
+  
   const statusBefore = runGitCommand(repoRoot, ['status', '--porcelain'], worktreePath);
-  const hadChanges = statusBefore.ok && statusBefore.stdout.length > 0;
+  if (!statusBefore.ok) throw new Error(`worktree_status_failed:${worktreePath}:${statusBefore.stderr}`);
+  const hadChanges = statusBefore.stdout.length > 0;
 
   let syntheticCommit: string | null = null;
   if (hadChanges) {
@@ -1703,28 +1831,34 @@ async function prepareShutdownMergeReport(
         leaderHeadAfter: resolveLeaderHead(repoRoot, leaderCwd),
       };
     }
-    const commitResult = runGitCommand(
-      repoRoot,
-      ['commit', '--no-verify', '-m', `omx(team): checkpoint ${worker.name} shutdown changes`],
-      worktreePath,
-    );
-    if (commitResult.ok) {
-      const revParse = runGitCommand(repoRoot, ['rev-parse', 'HEAD'], worktreePath);
-      syntheticCommit = revParse.ok && revParse.stdout ? revParse.stdout : null;
-    } else if (!/nothing to commit/i.test(commitResult.stderr)) {
-      return {
-        workerName: worker.name,
+    // Check if there's anything to commit using git diff --cached --quiet
+    const diffCachedResult = runGitCommand(repoRoot, ['diff', '--cached', '--quiet'], worktreePath);
+    const hasChanges = !diffCachedResult.ok; // exit code 0 means no changes, 1 means changes exist
+    
+    if (hasChanges) {
+      const commitResult = runGitCommand(
+        repoRoot,
+        ['commit', '--no-verify', '-m', `omx(team): checkpoint ${worker.name} shutdown changes`],
         worktreePath,
-        reportPath: join(worktreePath, '.omx', 'diff.md'),
-        sourceRef: null,
-        syntheticCommit: null,
-        diffText: getWorktreeDiffText(worktreePath),
-        summaryText: null,
-        mergeOutcome: 'skipped',
-        mergeDetail: commitResult.stderr || 'git commit failed',
-        leaderHeadBefore: resolveLeaderHead(repoRoot, leaderCwd),
-        leaderHeadAfter: resolveLeaderHead(repoRoot, leaderCwd),
-      };
+      );
+      if (commitResult.ok) {
+        const revParse = runGitCommand(repoRoot, ['rev-parse', 'HEAD'], worktreePath);
+        syntheticCommit = revParse.ok && revParse.stdout ? revParse.stdout : null;
+      } else {
+        return {
+          workerName: worker.name,
+          worktreePath,
+          reportPath: join(worktreePath, '.omx', 'diff.md'),
+          sourceRef: null,
+          syntheticCommit: null,
+          diffText: getWorktreeDiffText(worktreePath),
+          summaryText: null,
+          mergeOutcome: 'skipped',
+          mergeDetail: commitResult.stderr || 'git commit failed',
+          leaderHeadBefore: resolveLeaderHead(repoRoot, leaderCwd),
+          leaderHeadAfter: resolveLeaderHead(repoRoot, leaderCwd),
+        };
+      }
     }
   }
 
@@ -1772,8 +1906,10 @@ async function prepareShutdownMergeReport(
     leaderHeadAfter,
   };
 
-  await mkdir(join(worktreePath, '.omx'), { recursive: true });
-  await writeFile(reportPath, renderWorktreeMergeReport(report), 'utf-8');
+  // Report I/O must not erase completed Git operations from the commit ledger.
+  await writeShutdownReport(repoRoot, worktreePath, renderWorktreeMergeReport(report)).catch((error) => {
+    process.stderr.write(`[team/runtime] shutdown report failed: ${String(error)}\n`);
+  });
   process.stdout.write(`${renderWorktreeMergeReport(report)}\n`);
   return report;
 }
@@ -1787,6 +1923,7 @@ async function prepareWorkerWorktreeShutdownReports(config: TeamConfig, leaderCw
       if (report) reports.push(report);
     } catch (error) {
       const worktreePath = resolve(worker.worktree_path);
+      const repoRoot = resolve(worker.worktree_repo_root);
       const reportPath = join(worktreePath, '.omx', 'diff.md');
       const fallback = [
         `# Worker ${worker.name} shutdown report`,
@@ -1797,8 +1934,7 @@ async function prepareWorkerWorktreeShutdownReports(config: TeamConfig, leaderCw
         `- merge_detail: ${String(error)}`,
         '',
       ].join('\n');
-      await mkdir(join(worktreePath, '.omx'), { recursive: true }).catch(() => {});
-      await writeFile(reportPath, fallback, 'utf-8').catch(() => {});
+      await writeShutdownReport(repoRoot, worktreePath, fallback).catch(() => {});
       process.stdout.write(`${fallback}\n`);
     }
   }
@@ -4914,7 +5050,7 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
   // Reconcile accepted detached-session destruction before any other shutdown
   // effect. A receipt is the only durable authority across the kill/query crash
   // window and is deliberately fail-closed on malformed or unavailable input.
-  await reconcileDetachedSessionDestroyReceipt(sanitized, cwd, config);
+  const detachedSessionDestroyed = await reconcileDetachedSessionDestroyReceipt(sanitized, cwd, config);
   config = await readTeamConfig(sanitized, cwd);
   if (!config) throw new Error(`shutdown_config_missing_after_detached_reconciliation:${sanitized}`);
   config = await reconcileStartupCleanupPanes(config, cwd);
@@ -5030,7 +5166,7 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
     cwd,
   ).catch(() => {});
 
-  if (force) {
+  if (force || detachedSessionDestroyed) {
     // Explicit force means teardown now. Do not spend the graceful ack window
     // waiting for interactive panes or prompt workers that will be killed below.
     skipWorkerAcks = true;
@@ -5137,7 +5273,7 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
   const hudPaneId = config.hud_pane_id;
   const leaderPanePid = config.leader_pane_pid;
   const hudPanePid = config.hud_pane_pid;
-  if (config.worker_launch_mode === 'interactive') {
+  if (config.worker_launch_mode === 'interactive' && !detachedSessionDestroyed) {
 
     const effectiveLeaderPaneId = sharedSessionTopology?.status === 'available'
       ? sharedSessionTopology.leaderPaneId
@@ -5387,6 +5523,14 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
         }
         if (teardown.terminated && readExactPaneProofSync(paneId).status === 'gone') {
           prekillResolvedWorkerPaneIds.add(paneId);
+          config = await mutateShutdownConfig(config, cwd, (current) => {
+            for (const worker of current.workers) {
+              if (worker.pane_id === paneId) {
+                worker.pane_id = undefined;
+                worker.pid = undefined;
+              }
+            }
+          });
         }
 
 
@@ -5442,6 +5586,11 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
       if (hudTeardown.kill.failed > 0) {
         throw new Error(`shutdown_pane_teardown_failed:${hudTeardown.kill.failedPaneIds.join(',')}`);
       }
+
+      config = await mutateShutdownConfig(config, cwd, (current) => {
+        current.hud_pane_id = null;
+        current.hud_pane_pid = undefined;
+      });
 
       if (sessionName.includes(':')) {
         if (frozenRestoreLeaderAuthorization) {
@@ -5522,21 +5671,30 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
           : undefined,
       },
     );
+    const goneWorkerPaneIds = new Set([...prekillResolvedWorkerPaneIds, ...workerTeardown.provenGonePaneIds, ...workerTeardown.killedPaneIds]);
+    if (goneWorkerPaneIds.size > 0 || (workerTeardown.proofUnavailable.length === 0 && workerTeardown.kill.failed === 0)) {
+      config = await mutateShutdownConfig(config, cwd, (current) => {
+        current.resize_hook_name = null;
+        current.resize_hook_target = null;
+        if (!restoredHudPaneId) {
+          current.hud_pane_id = null;
+          current.hud_pane_pid = undefined;
+        }
+        for (const worker of current.workers) {
+          if (worker.pane_id && goneWorkerPaneIds.has(worker.pane_id)) {
+            worker.pane_id = undefined;
+            worker.pid = undefined;
+          }
+        }
+      });
+    }
     assertPaneTeardownProofsAvailable('shutdown', workerTeardown.proofUnavailable);
     if (workerTeardown.kill.failed > 0) {
       throw new Error(`shutdown_pane_teardown_failed:${workerTeardown.kill.failedPaneIds.join(',')}`);
     }
-    config = await mutateShutdownConfig(config, cwd, (current) => {
-      current.resize_hook_name = null;
-      current.resize_hook_target = null;
-    });
-
-    // 4. Destroy a detached session only after an authoritative leader proof.
-    if (!sessionName.includes(':')) {
-      await destroyConfiguredDetachedTeamSession(sanitized, cwd, config);
-    }
-  } else {
+  } else if (config.worker_launch_mode === 'prompt') {
     const promptTeardownFailures: string[] = [];
+    const promptTeardownResults: Map<string, { terminated: boolean }> = new Map();
     for (const w of config.workers) {
       const teardown = await teardownPromptWorker(
         sanitized,
@@ -5545,16 +5703,28 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
         cwd,
         'shutdown',
       );
+      promptTeardownResults.set(w.name, { terminated: teardown.terminated });
       if (!teardown.terminated) {
         promptTeardownFailures.push(`${w.name}:${teardown.error || 'unknown_error'}`);
       }
     }
+    // Persist successful prompt teardowns before aborting on failures (P1 4361203081).
+    // This ensures a retry never signals a reused PID for successfully terminated workers.
+    config = await mutateShutdownConfig(config, cwd, (current) => {
+      for (const worker of current.workers) {
+        const teardownResult = promptTeardownResults.get(worker.name);
+        if (teardownResult?.terminated) {
+          worker.pid = undefined;
+        }
+      }
+    });
     if (promptTeardownFailures.length > 0) {
       throw new Error(`shutdown_prompt_teardown_failed:${promptTeardownFailures.join(',')}`);
     }
   }
 
   const shutdownReports = await prepareWorkerWorktreeShutdownReports(config, cwd);
+  const provisionedWorktrees = collectProvisionedShutdownWorktrees(config);
 
   const commitHygieneEntries: TeamOperationalCommitEntry[] = [];
   for (const report of shutdownReports) {
@@ -5610,6 +5780,14 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
     commitHygieneArtifacts ??= writtenArtifacts
   }
 
+  // Force stops workers; it is not permission to discard work that failed to save.
+  for (const worktree of provisionedWorktrees) {
+    const report = shutdownReports.find((entry) => entry.worktreePath === worktree.worktreePath);
+    if (!report?.sourceRef || (report.mergeOutcome !== 'merged' && report.mergeOutcome !== 'noop')) {
+      throw new Error(`shutdown_worktree_preservation_failed:${worktree.worktreePath}:${report?.mergeDetail ?? 'shutdown report unavailable'}; worktree and team state retained`);
+    }
+  }
+
   // 5. Remove worker worktree-root instructions and team-scoped fallback instructions.
   for (const worker of config.workers) {
     if (!worker.worktree_path || !worker.team_state_root) continue;
@@ -5632,15 +5810,26 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
   restoreTeamModelInstructionsFile(sanitized);
 
   const cleanupErrors: string[] = [];
-  const provisionedWorktrees = collectProvisionedShutdownWorktrees(config);
-  if (provisionedWorktrees.length > 0) {
-    try {
-      await rollbackProvisionedWorktrees(provisionedWorktrees, {
-        skipBranchDeletion: false,
-      });
-    } catch (err) {
-      cleanupErrors.push(`rollbackProvisionedWorktrees: ${String(err)}`);
+  for (const worktree of provisionedWorktrees) {
+    const head = runGitCommand(worktree.repoRoot, ['rev-parse', 'HEAD'], worktree.worktreePath);
+    const saved = head.ok && runGitCommand(worktree.repoRoot, ['merge-base', '--is-ancestor', head.stdout, 'HEAD'], cwd).ok;
+    await removeGeneratedShutdownReport(worktree.repoRoot, worktree.worktreePath);
+    const status = runGitCommand(worktree.repoRoot, ['status', '--porcelain', '--untracked-files=all', '--ignored', '--ignore-submodules=none'], worktree.worktreePath);
+    if (!saved || !status.ok || status.stdout) {
+      throw new Error(`shutdown_worktree_preservation_failed:${worktree.worktreePath}:worktree changed or could not be verified; worktree and team state retained`);
     }
+  }
+  if (provisionedWorktrees.length > 0) {
+    // Keep recovery state if removal itself fails, including after a partial cleanup.
+    await rollbackProvisionedWorktrees(provisionedWorktrees, {
+      force: false,
+      skipBranchDeletion: false,
+    });
+  }
+
+  // Preserve detached-session authority for retries until worktrees are saved and removed.
+  if (config.worker_launch_mode === 'interactive' && !detachedSessionDestroyed && !sessionName.includes(':')) {
+    await destroyConfiguredDetachedTeamSession(sanitized, cwd, config);
   }
 
   // 7. Retire Team-scoped global projections before deleting the exact state
