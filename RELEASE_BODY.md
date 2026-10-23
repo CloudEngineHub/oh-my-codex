@@ -1,27 +1,31 @@
-# oh-my-codex 0.21.33
+# oh-my-codex 0.21.34
 
-`0.21.33` is a patch release that recovers team dispatch finalizations from torn journal lines (PR #3893).
+`0.21.34` is a patch release that preserves worker worktrees when shutdown cannot save work (PR #3896).
 
-This release fixes a critical issue where the `runtime-finalizations.jsonl` journal file could be corrupted after a crash mid-append. When the process crashed while writing a dispatch finalization record, subsequent appends would be lost because the parser couldn't recover from the truncated line. The fix adds tolerant parsing to recover valid commands from corrupted journals and uses newline-isolated appends to protect new entries from torn tails.
+This release fixes an issue where worker worktrees could be deleted during shutdown even when checkpointing or merging failed, or when the working directory contained ignored files. The shutdown process no longer deletes worker worktrees in these failure cases, allowing recovery state to be preserved for retries. Submodules, report provenance, and partial pane/prompt teardown are still handled correctly.
 
 ## Highlights
 
-- **CRASH RECOVERY: Tolerant parsing of corrupted dispatch finalization journals (#3893):** After a crash mid-append to `runtime-finalizations.jsonl`, the file could contain truncated JSON lines that blocked the entire reconciliation and caused subsequent receipts to be lost. The fix adds `parseRuntimeFinalizationJournal()` which skips malformed lines and recovers all valid dispatch finalization commands, allowing the runtime to gracefully recover from corruption and replay pending operations without data loss.
-- **Newline-isolated journal appends (#3893):** New dispatch finalization records are now prepended with a newline separator, ensuring they remain isolable even if a previous append was incomplete. Combined with tolerant parsing, this prevents cascading failures where one corrupted entry blocks recovery of all subsequent entries.
-- **Comprehensive test coverage (#3893):** New test suite (`dispatch-finalization-journal.test.ts`) validates recovery from various corruption scenarios: torn lines, null entries, array entries, and unterminated tails. Tests confirm that valid commands are preserved and replayed correctly while malformed lines are safely skipped.
+- **PRESERVATION: Worker worktrees survive shutdown failure (#3896):** When shutdown could not save work (checkpointing failure, merge failure, or ignored files present), the process would still delete worker worktrees, losing recovery state. The fix preserves worktrees in these cases, allowing retries with full state intact. This also resolves issue #3897.
+- **Recovery state retention:** Shutdown failures no longer erase the work that was being preserved; recovery can be attempted on the next run.
+- **Selective teardown (#3896):** Submodules, report provenance, and partial pane/prompt cleanup proceed independently; a failure in one component no longer cascades to worktree deletion.
 
 ## Compatibility
 
-- No breaking API changes; dispatch recovery improvement only.
-- **Team runtime users:** If the runtime crashed during dispatch finalization writes in earlier versions, upgrade to v0.21.33 to recover any pending operations. Recovery is automatic and requires no configuration.
-- Existing sessions remain unaffected unless they were interrupted by runtime crashes and had unrecovered dispatch finalizations.
-- The fix improves resilience without changing the dispatch API contract.
+- No breaking API changes; shutdown resilience improvement only.
+- **Team runtime users:** If shutdown failed to save work in earlier versions, worker worktrees were lost. Upgrade to v0.21.34 to preserve recovery state in shutdown failure cases.
+- Existing sessions remain unaffected unless they experienced shutdown failures with ignored files or checkpointing errors.
+- The fix improves robustness without changing the shutdown API contract.
+
+## Known issues
+
+- #3898 (live-pin fix) is in progress (#3900); `Codex 0.164.0` hook validation was invalidated by `.omx-live-pin` files in the plugin cache. Workaround: manually clear `.omx-live-pin` from the cache if running Codex 0.164.0.
 
 ## Validation
 
-- Pinned candidate `fa9b223d8f9fe961a26f048f2132397ccdf7a938` passed CI run 39913485838: 17 checks succeeded, 8 conditional checks skipped, no failures (verified at 07:17Z on 2026-10-23).
+- Pinned candidate `bc7efc1c1c504b84a28cd4b24c1f3d6af08e6217` passed CI run at 20:16Z on 2026-10-24: 17 checks succeeded, 8 conditional checks skipped, no failures.
 - Both macOS Ralplan preflight security jobs PASSED (not cancelled or failed).
-- All local gates pass: build, typecheck, lint, and dispatch finalization journal recovery tests.
+- All local gates pass: build, typecheck, lint, and team runtime shutdown preservation tests.
 - All code review findings addressed.
 - Ready for merge and release.
 
@@ -29,13 +33,13 @@ This release fixes a critical issue where the `runtime-finalizations.jsonl` jour
 
 | PR | Author | Title |
 |---|---|---|
-| [#3893](https://github.com/Yeachan-Heo/oh-my-codex/pull/3893) | @shenyankm | fix: recover team dispatch finalizations from torn journal lines |
+| [#3896](https://github.com/Yeachan-Heo/oh-my-codex/pull/3896) | @shenyankm | fix(team): preserve worker worktrees when shutdown cannot save work |
 
 ## Contributors
 
-Thanks to @shenyankm for the dispatch recovery fix, and @Claude Code for release validation.
+Thanks to @shenyankm for the shutdown preservation fix, and @Claude Code for release validation.
 
-**Full Changelog**: [`v0.21.32...v0.21.33`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.32...v0.21.33)
+**Full Changelog**: [`v0.21.33...v0.21.34`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.33...v0.21.34)
 
 —
 *[repo owner's gaebal-gajae (clawdbot) 🦞]*

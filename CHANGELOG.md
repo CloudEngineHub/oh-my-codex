@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.34] - 2026-10-24
+
+Patch release for worker worktree shutdown preservation (1 commit, 7 files, +1413/−57; PR #3896).
+
+### Fixed
+
+- **SHUTDOWN RESILIENCE:** Preserve worker worktrees when shutdown cannot save work due to checkpointing failure, merge failure, or ignored files in the working directory. Shutdown failures no longer erase worker worktrees; recovery state is retained for retries. Submodule handling, report provenance, and partial pane/prompt cleanup proceed independently (#3896, @shenyankm; resolves #3897).
+
+Full inventory, contributors, compatibility notes, and verification: [release notes](docs/release-notes-0.21.34.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.33...v0.21.34
+
 ## [0.21.33] - 2026-10-23
 
 Patch release for team dispatch finalization recovery (1 commit, 4 files, +251/−8; PR #3893).
