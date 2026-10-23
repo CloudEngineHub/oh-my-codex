@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.32] - 2026-10-23
+
+Patch release for setup scope validation regression fix (13 commits, 4 files, +664/−112; PR #3890).
+
+### Fixed
+
+- **REGRESSION FIX:** Canonicalize scope roots and fix symlink path comparison in `omx setup`, resolving a v0.21.31 regression that rejected valid destinations as "outside managed scope" when HOME/CODEX_HOME crosses a symlink (e.g., macOS /var -> /private/var; #3890, @gajae-gajae).
+- Validate project .codex and OMX_ROOT dirs against their own roots, preventing rejection of valid nested configurations (#3890).
+- Migrate legacy user-scope skill receipt during setup upgrade (#3890).
+- Sanitize Windows cross-drive backup paths through unified helper (#3890).
+- Detect dangling symlinks before canonicalization and refuse them with clear error messages (#3890).
+
+Full inventory, contributors, compatibility notes, and verification: [release notes](docs/release-notes-0.21.32.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.31...v0.21.32
+
 ## [0.21.31] - 2026-10-22
 
 Patch release for setup symlink safety and dispatch read reliability (PRs #3881, #3883).
