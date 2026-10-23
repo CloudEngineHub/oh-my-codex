@@ -1,35 +1,43 @@
-# oh-my-codex 0.21.31
+# oh-my-codex 0.21.32
 
-`0.21.31` is a patch release for setup symlink safety (2 commits, 7 files, +120/−11; PR #3881).
+`0.21.32` is a patch release that fixes a v0.21.31 regression in setup scope validation (PR #3890).
+
+This release restores valid macOS and other symlink-heavy systems to working order. On these systems, when HOME or CODEX_HOME crosses a symlink (e.g., `/var` → `/private/var` on macOS), v0.21.31's strict path comparison rejected valid destinations as "outside managed scope," breaking setup for 113+ macOS test runs. The fix canonicalizes all scope paths before comparison, allowing setup to work correctly across symlink boundaries while maintaining security.
 
 ## Highlights
 
-- **Setup symlink destination refusal (#3881):** The `omx setup` command now detects and rejects symlinked managed destinations (including dangling links) before reading, backing up, or writing. This prevents scenarios where a committed `.gitignore` or prompt path symlink could cause `ensureBackup` to overwrite files outside the repository. The check validates every path component without following symlinks, not just the leaf destination, preventing writes through symlinked ancestor directories. The check is applied to all write paths: `.gitignore`, native agent TOMLs and manifest, HUD config, and skill receipt. This is a behavioral change: setup now fails closed on symlinked managed destinations.
+- **REGRESSION FIX: Symlink canonicalization in scope validation (#3890):** The v0.21.31 symlink guard used path string comparison that failed when HOME or CODEX_HOME contains symlinks (common on macOS where `/var → /private/var`). The fix canonicalizes all paths to their real destinations before comparing, allowing valid scope entries on symlink-heavy systems while maintaining the v0.21.31 security improvement. Setup now correctly validates scope boundaries across OS symlinks in scope ancestors.
+- **Correct project root validation scope (#3890):** Directories like `.codex` and OMX_ROOT are now validated against their own root boundaries, not the workspace root. This prevents rejecting valid configurations where project-scope .codex lives in a nested subdirectory or OMX_ROOT points to a managed third-party path.
+- **Legacy skill receipt migration (#3890):** The setup command now detects and migrates legacy user-scope skill receipts from pre-0.21 locations during upgrade, preventing loss of historical skill data.
+- **Windows cross-drive backup path handling (#3890):** Backup paths that cross drive boundaries on Windows are now sanitized through the unified helper, preventing path traversal issues and invalid references.
+- **Dangling symlink detection (#3890):** Before canonicalizing paths, the setup command now detects dangling symlinks and refuses them with clear error messages, preventing silent failures and ambiguous path resolution.
 
 ## Compatibility
 
 - No breaking API changes; setup security improvement only.
-- Existing sessions remain unaffected unless they have symlinked managed destinations (which will now be rejected with a clear error message and workarounds).
-- Setup now fails fast on symlinked destinations instead of silently writing through them.
+- **macOS users:** If you hit "outside managed scope" errors on v0.21.31, update to v0.21.32 to restore setup functionality.
+- Existing sessions remain unaffected unless they were broken by v0.21.31's regression.
+- Setup now succeeds on symlink-heavy systems while maintaining symlink-destination refusal (the v0.21.31 behavior) for managed paths.
 
 ## Validation
 
-- Pinned candidate `e37177bb8d5aa2c4dfb4644aeb0040fbddc953da` passed latest-per-name release CI: 23 checks succeeded and 1 conditional check was skipped, with no failures (verified at 15:17Z on 2026-10-22).
-- Release branch CI passed with all required checks green.
+- Pinned candidate `44d33163fd5512a143eaedb6f2377a816f819a2a` passed CI run 39878502256: 17 checks succeeded, 8 conditional checks skipped, no failures (verified at 01:17Z on 2026-10-23).
+- Both macOS Ralplan preflight security jobs PASSED (not cancelled or failed).
+- All local gates pass: build, typecheck, lint, and setup symlink tests.
 - All code review findings addressed.
-- Local gates pass: build, typecheck, and lint.
+- Ready for merge and release.
 
 ## Merged PR inventory
 
 | PR | Author | Title |
 |---|---|---|
-| [#3881](https://github.com/Yeachan-Heo/oh-my-codex/pull/3881) | @shenyankm | fix(setup): refuse symlinked managed destinations |
+| [#3890](https://github.com/Yeachan-Heo/oh-my-codex/pull/3890) | @gajae-gajae | fix(setup): canonicalize scope roots and destinations, validate project dirs against their own roots, migrate legacy skill receipt, sanitize Windows backup paths, detect dangling symlinks |
 
 ## Contributors
 
-Thanks to @shenyankm for the setup symlink safety improvements, and @Claude Code for co-authorship.
+Thanks to @gajae-gajae for the regression fix, and @Claude Code for release validation.
 
-**Full Changelog**: [`v0.21.30...v0.21.31`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.30...v0.21.31)
+**Full Changelog**: [`v0.21.31...v0.21.32`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.31...v0.21.32)
 
 —
 *[repo owner's gaebal-gajae (clawdbot) 🦞]*
