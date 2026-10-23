@@ -2000,10 +2000,8 @@ async function cleanupNativeHookTransactionStagedDeletions(
  * On Unix: /custom-codex/config.toml -> custom-codex_config.toml
  */
 function sanitizePathForBackup(absPath: string): string {
-	// Remove leading slashes and backslashes
-	let sanitized = absPath.replace(/^[\\/]+/, "");
-	// Remove Windows drive letters (e.g., "C:" -> "")
-	sanitized = sanitized.replace(/^[A-Za-z]:/, "");
+	// Remove the Windows drive letter (e.g., "C:"), then leading slashes and backslashes
+	let sanitized = absPath.replace(/^[A-Za-z]:/, "").replace(/^[\\/]+/, "");
 	// Remove any remaining backslashes and colons, replacing with underscores
 	sanitized = sanitized.replace(/[\\/\\:]/g, "_");
 	// Collapse multiple underscores
@@ -2011,16 +2009,34 @@ function sanitizePathForBackup(absPath: string): string {
 	return sanitized;
 }
 
+/**
+ * Relative location of `targetPath` inside a backup root. Falls back to a sanitized
+ * absolute path when the target is outside `baseRoot`, including Windows cross-drive
+ * targets where `relative()` returns an absolute path instead of a `..` path.
+ */
+export function backupRelativePath(
+	baseRoot: string,
+	targetPath: string,
+	pathApi: Pick<typeof import("path"), "relative" | "isAbsolute"> = { relative, isAbsolute },
+): string {
+	const relativePath = pathApi.relative(baseRoot, targetPath);
+	if (
+		relativePath === "" ||
+		relativePath === ".." ||
+		relativePath.startsWith("../") ||
+		relativePath.startsWith("..\\") ||
+		pathApi.isAbsolute(relativePath)
+	) {
+		return sanitizePathForBackup(targetPath);
+	}
+	return relativePath;
+}
+
 function nativeHookTransactionBackupPath(
 	artifactPath: string,
 	backupContext: SetupBackupContext,
 ): string {
-	const relativePath = relative(backupContext.baseRoot, artifactPath);
-	const safeRelativePath =
-		relativePath.startsWith("..") || relativePath === ""
-			? sanitizePathForBackup(artifactPath)
-			: relativePath;
-	return join(backupContext.backupRoot, safeRelativePath);
+	return join(backupContext.backupRoot, backupRelativePath(backupContext.baseRoot, artifactPath));
 }
 
 async function ensureSnapshotBackup(
@@ -2484,12 +2500,10 @@ async function ensureBackup(
 	await assertManagedDestination(destinationPath, scopeRoot);
 	if (!contentChanged || !existsSync(destinationPath)) return false;
 
-	const relativePath = relative(backupContext.baseRoot, destinationPath);
-	const safeRelativePath =
-		relativePath.startsWith("..") || relativePath === ""
-			? sanitizePathForBackup(destinationPath)
-			: relativePath;
-	const backupPath = join(backupContext.backupRoot, safeRelativePath);
+	const backupPath = join(
+		backupContext.backupRoot,
+		backupRelativePath(backupContext.baseRoot, destinationPath),
+	);
 
 	if (!options.dryRun) {
 		const backupScopeRoot = await getValidationScopeRoot(backupPath);
@@ -6533,12 +6547,7 @@ async function removeDirectoryCopyAware(
 	const destinationExists = existsSync(sourceDir);
 	if (!destinationExists) return false;
 
-	const relativePath = relative(backupContext.baseRoot, sourceDir);
-	const safeRelativePath =
-		relativePath.startsWith(".." ) || relativePath === ""
-			? sourceDir.replace(/^[\/]+/, "")
-			: relativePath;
-	const backupPath = join(backupContext.backupRoot, safeRelativePath);
+	const backupPath = join(backupContext.backupRoot, backupRelativePath(backupContext.baseRoot, sourceDir));
 
 	if (!options.dryRun) {
 		await mkdir(dirname(backupPath), { recursive: true });

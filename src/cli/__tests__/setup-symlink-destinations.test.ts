@@ -2,9 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile, lstat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, posix, win32 } from 'node:path';
 import { tmpdir } from 'node:os';
-import { setup } from '../setup.js';
+import { backupRelativePath, setup } from '../setup.js';
 
 function setMockHome(home: string): () => void {
   const previousHome = process.env.HOME;
@@ -380,43 +380,20 @@ describe('omx setup symlink destinations', () => {
     });
   });
 
-  it('sanitizes Windows drive letters and separators in out-of-base backup paths', async () => {
-    // Codex finding #4353740712: When CODEX_HOME is outside HOME on Windows,
-    // backup paths must sanitize Windows drive letters and separators to avoid creating invalid paths.
-    // A path like C:\custom-codex\config.toml should be transformed to custom-codex_config.toml
-    // (or similar) instead of creating a path with embedded colons or drive letters.
-    
-    // Simulate a Windows path by using a path with a drive letter-like component
-    const winPath = 'C:\\custom-codex\\config.toml';
-    const unixPath = '/custom-codex/config.toml';
-    
-    // Test that the sanitization function removes drive letters and colons
-    // This is a unit test of the internal sanitization logic
-    // (The actual backup creation is tested in integration tests with real setup calls)
-    
-    // For now, we verify that even on Unix we can handle Windows-style paths without errors
-    const backupRoot = await mkdtemp(join(tmpdir(), 'omx-setup-windows-path-'));
-    const previousHome = process.env.HOME;
-    process.env.HOME = backupRoot;
-    
-    try {
-      await mkdir(join(backupRoot, '.codex'), { recursive: true });
-      
-      // Create a test file with a path that looks like it came from Windows
-      // We'll use a relative path calculation to simulate the out-of-base backup scenario
-      const testFile = join(backupRoot, '.codex', 'test-config.toml');
-      await writeFile(testFile, 'test content');
-      
-      // Verify the file was created successfully
-      assert(existsSync(testFile), 'test file should be created');
-    } finally {
-      if (typeof previousHome === 'string') {
-        process.env.HOME = previousHome;
-      } else {
-        delete process.env.HOME;
-      }
-      await rm(backupRoot, { recursive: true, force: true });
-    }
+  it('sanitizes out-of-base and Windows cross-drive backup paths', () => {
+    // Same-drive targets keep their relative location under the backup root.
+    assert.equal(
+      backupRelativePath('C:\\Users\\alice', 'C:\\Users\\alice\\.codex\\skills\\old', win32),
+      '.codex\\skills\\old',
+    );
+    // Cross-drive: win32.relative returns an absolute path, which must not escape the backup root.
+    assert.equal(
+      backupRelativePath('C:\\Users\\alice', 'D:\\codex\\skills\\old', win32),
+      'codex_skills_old',
+    );
+    assert.equal(backupRelativePath('/home/alice', '/opt/codex/skills/old', posix), 'opt_codex_skills_old');
+    assert.equal(backupRelativePath('/home/alice', '/home/alice', posix), 'home_alice');
+    assert.equal(backupRelativePath('/home/alice', '/home/alice/..data/x', posix), '..data/x');
   });
 
   it('rejects dangling symlinks in validation scope to prevent out-of-scope writes', async () => {
