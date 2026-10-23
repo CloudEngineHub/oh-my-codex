@@ -540,7 +540,9 @@ async function prepareSubmodulesForWorktreeRemoval(worktreePath: string, recover
   // Moving whole checkouts retains local data without deinit's writes to shared repository config.
   const moves = checkouts.map(path => ({ original: join(worktreePath, path), saved: join(recovery.directory!, 'checkouts', path), checkout: true }));
   if (existsSync(modules)) moves.push({ original: modules, saved: join(recovery.directory, 'modules'), checkout: false });
-  await fsPromises.writeFile(join(recovery.directory, 'recovery.json'), JSON.stringify(moves));
+  // Include worktreePath to bind recovery journal to this worktree (P2 #4364260549)
+  const recoveryMetadata = { worktreePath, moves };
+  await fsPromises.writeFile(join(recovery.directory, 'recovery.json'), JSON.stringify(recoveryMetadata));
   for (const move of moves) {
     await fsPromises.mkdir(dirname(move.saved), { recursive: true });
     await fsPromises.rename(move.original, move.saved);
@@ -597,12 +599,29 @@ export async function replaySubmoduleRecovery(worktreePath: string, repoRoot: st
     
     try {
       const content = await fsPromises.readFile(recoveryJsonPath, 'utf-8');
-      const moves = JSON.parse(content) as Array<{ original: string; saved: string; checkout: boolean }>;
+      const parsed = JSON.parse(content) as unknown;
+      
+      // Handle both old format (array) and new format (object with metadata)
+      const moves = (Array.isArray(parsed) 
+        ? parsed 
+        : (parsed as { worktreePath?: string; moves?: unknown[] }).moves || []
+      ) as Array<{ original: string; saved: string; checkout: boolean }>;
+      const storedWorktreePath = !Array.isArray(parsed) && (parsed as { worktreePath?: string }).worktreePath;
+      
+      // P2 #4364260549: Only replay journals for the current worktree
+      if (storedWorktreePath && storedWorktreePath !== worktreePath) {
+        continue; // Skip journals from other worktrees
+      }
       
       let anyMovesFailed = false;
       // Restore all submodules from this recovery directory
       for (const move of [...moves].reverse()) {
         try {
+          // P2 #4364260546: Check if saved path still exists; if not, move was already restored
+          if (!existsSync(move.saved)) {
+            continue; // This move was already successfully restored in a prior replay
+          }
+          
           if (move.checkout) await fsPromises.rmdir(move.original).catch((error: NodeJS.ErrnoException) => {
             if (error.code !== 'ENOENT') throw error;
           });

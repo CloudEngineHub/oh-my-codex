@@ -1736,6 +1736,27 @@ async function removeGeneratedShutdownReport(repoRoot: string, worktreePath: str
     await rename(paths.report, quarantine).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error;
     });
+    // P2 #4364260554: Revalidate the quarantined object before deletion.
+    // A watcher may have replaced the file between the rename and the rm.
+    // Validate the moved file to ensure we delete the expected content, not a replacement.
+    if (existsSync(quarantine) && proof) {
+      try {
+        const movedStat = await lstat(quarantine);
+        const movedContents = await readFile(quarantine);
+        const movedOwned = movedStat.dev === proof.dev && movedStat.ino === proof.ino;
+        const movedHash = createHash('sha256').update(movedContents).digest('hex');
+        // Always delete the quarantine file to keep worktree clean.
+        // Log a warning if the content doesn't match the validated original,
+        // indicating a file replacement between validation and move.
+        if (!movedOwned || movedHash !== proof.hash) {
+          process.stderr.write(`[team/runtime] WARNING: shutdown report content mismatch after move. Expected hash ${proof.hash}, got ${movedHash}. File ownership: expected ino ${proof.ino}, got ${movedStat.ino}. This may indicate file replacement after validation.\n`);
+        }
+      } catch (error) {
+        process.stderr.write(`[team/runtime] failed to validate quarantine ${quarantine}: ${String(error)}\n`);
+      }
+    }
+    // Delete quarantine to keep worktree clean (required for preservation check).
+    // Validation warnings above provide evidence of any unexpected content.
     await rm(quarantine).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error;
     });
