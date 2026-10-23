@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.33] - 2026-10-23
+
+Patch release for team dispatch finalization recovery (1 commit, 4 files, +251/−8; PR #3893).
+
+### Fixed
+
+- **CRASH RECOVERY:** Recover team dispatch finalizations from torn journal lines in `runtime-finalizations.jsonl`. After a crash mid-append, the journal could contain truncated JSON lines that blocked reconciliation and caused subsequent receipts to be lost. The fix adds tolerant parsing via `parseRuntimeFinalizationJournal()` to skip malformed lines and recover all valid commands, and uses newline-isolated appends to protect new entries from torn tails (#3893, @shenyankm).
+
+Full inventory, contributors, compatibility notes, and verification: [release notes](docs/release-notes-0.21.33.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.32...v0.21.33
+
 ## [0.21.32] - 2026-10-23
 
 Patch release for setup scope validation regression fix (13 commits, 4 files, +664/−112; PR #3890).
