@@ -518,7 +518,8 @@ async function prepareSubmodulesForWorktreeRemoval(worktreePath: string, recover
   // preserve it to avoid destroying work that git add would checkpoint.
   const evidencePath = join(worktreePath, '.omx/evidence');
   const headStatus = await git(['status', '--porcelain', '--', '.omx/evidence']).catch(() => '');
-  if (!headStatus.trim()) {
+  const isTracked = (await git(['ls-files', '--cached', '.omx/evidence']).catch(() => '')).trim().length > 0;
+  if (!headStatus.trim() && !isTracked) {
     // Only remove if it's not tracked or staged
     await rm(evidencePath, { recursive: true, force: true }).catch(() => {});
   }
@@ -602,7 +603,11 @@ export async function replaySubmoduleRecovery(worktreePath: string, repoRoot: st
           if (move.checkout) await fsPromises.rmdir(move.original).catch((error: NodeJS.ErrnoException) => {
             if (error.code !== 'ENOENT') throw error;
           });
-          if (existsSync(move.original)) continue; // Already restored
+          if (existsSync(move.original)) {
+            // Destination exists but move was skipped; preserve recovery for retry
+            anyMovesFailed = true;
+            continue;
+          }
           await fsPromises.rename(move.saved, move.original);
         } catch (error) {
           // Log but continue - we want to restore as much as possible
