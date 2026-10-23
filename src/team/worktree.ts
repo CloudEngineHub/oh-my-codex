@@ -574,13 +574,16 @@ async function restoreSubmodules(recovery: SubmoduleRecovery): Promise<void> {
  * Replaying it ensures submodules are restored before any git status/add operations.
  * Completed archives are skipped (marked with .completed) to avoid destroying
  * worker-local commits that were moved from a removed worktree.
+ * Returns true if all recovery journals were successfully replayed or didn't exist;
+ * returns false if any recovery remained unresolved, indicating shutdown should abort.
  */
-export async function replaySubmoduleRecovery(worktreePath: string, repoRoot: string): Promise<void> {
+export async function replaySubmoduleRecovery(worktreePath: string, repoRoot: string): Promise<boolean> {
   const commonDir = resolve(repoRoot, (await execFilePromise('git', ['rev-parse', '--git-common-dir'], {
     cwd: worktreePath, encoding: 'utf-8',
   })).stdout.trim());
   const recoveryRoot = join(commonDir, 'omx-submodule-recovery');
-  if (!existsSync(recoveryRoot)) return;
+  if (!existsSync(recoveryRoot)) return true; // No recovery needed
+  let anyRecoveryUnresolved = false;
   
   const archives = await fsPromises.readdir(recoveryRoot).catch(() => []);
   for (const archive of archives) {
@@ -620,11 +623,15 @@ export async function replaySubmoduleRecovery(worktreePath: string, repoRoot: st
       // Otherwise preserve it for the next shutdown attempt
       if (!anyMovesFailed) {
         await fsPromises.rm(recoveryDir, { recursive: true }).catch(() => {});
+      } else {
+        anyRecoveryUnresolved = true;
       }
     } catch (error) {
       process.stderr.write(`[team/worktree] failed to replay recovery journal: ${String(error)}\n`);
+      anyRecoveryUnresolved = true;
     }
   }
+  return !anyRecoveryUnresolved;
 }
 
 /**

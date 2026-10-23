@@ -1780,9 +1780,13 @@ async function prepareShutdownMergeReport(
   // Replay any pending submodule recovery journals before any git operations.
   // If the process was killed after moving submodules but before creating placeholders,
   // the recovery.json files persist and must be replayed to restore the checkouts.
-  await replaySubmoduleRecovery(worktreePath, repoRoot).catch((error) => {
+  const recoverySucceeded = await replaySubmoduleRecovery(worktreePath, repoRoot).catch((error) => {
     process.stderr.write(`[team/runtime] submodule recovery failed: ${String(error)}\n`);
+    return false; // Recovery encountered an error
   });
+  if (!recoverySucceeded) {
+    throw new Error(`submodule_recovery_unresolved:${worktreePath}:aborting shutdown to preserve recovery state`);
+  }
   
   const statusBefore = runGitCommand(repoRoot, ['status', '--porcelain'], worktreePath);
   if (!statusBefore.ok) throw new Error(`worktree_status_failed:${worktreePath}:${statusBefore.stderr}`);
