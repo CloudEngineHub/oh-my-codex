@@ -1,29 +1,27 @@
-# oh-my-codex 0.21.32
+# oh-my-codex 0.21.33
 
-`0.21.32` is a patch release that fixes a v0.21.31 regression in setup scope validation (PR #3890).
+`0.21.33` is a patch release that recovers team dispatch finalizations from torn journal lines (PR #3893).
 
-This release restores valid macOS and other symlink-heavy systems to working order. On these systems, when HOME or CODEX_HOME crosses a symlink (e.g., `/var` → `/private/var` on macOS), v0.21.31's strict path comparison rejected valid destinations as "outside managed scope," breaking setup for 113+ macOS test runs. The fix canonicalizes all scope paths before comparison, allowing setup to work correctly across symlink boundaries while maintaining security.
+This release fixes a critical issue where the `runtime-finalizations.jsonl` journal file could be corrupted after a crash mid-append. When the process crashed while writing a dispatch finalization record, subsequent appends would be lost because the parser couldn't recover from the truncated line. The fix adds tolerant parsing to recover valid commands from corrupted journals and uses newline-isolated appends to protect new entries from torn tails.
 
 ## Highlights
 
-- **REGRESSION FIX: Symlink canonicalization in scope validation (#3890):** The v0.21.31 symlink guard used path string comparison that failed when HOME or CODEX_HOME contains symlinks (common on macOS where `/var → /private/var`). The fix canonicalizes all paths to their real destinations before comparing, allowing valid scope entries on symlink-heavy systems while maintaining the v0.21.31 security improvement. Setup now correctly validates scope boundaries across OS symlinks in scope ancestors.
-- **Correct project root validation scope (#3890):** Directories like `.codex` and OMX_ROOT are now validated against their own root boundaries, not the workspace root. This prevents rejecting valid configurations where project-scope .codex lives in a nested subdirectory or OMX_ROOT points to a managed third-party path.
-- **Legacy skill receipt migration (#3890):** The setup command now detects and migrates legacy user-scope skill receipts from pre-0.21 locations during upgrade, preventing loss of historical skill data.
-- **Windows cross-drive backup path handling (#3890):** Backup paths that cross drive boundaries on Windows are now sanitized through the unified helper, preventing path traversal issues and invalid references.
-- **Dangling symlink detection (#3890):** Before canonicalizing paths, the setup command now detects dangling symlinks and refuses them with clear error messages, preventing silent failures and ambiguous path resolution.
+- **CRASH RECOVERY: Tolerant parsing of corrupted dispatch finalization journals (#3893):** After a crash mid-append to `runtime-finalizations.jsonl`, the file could contain truncated JSON lines that blocked the entire reconciliation and caused subsequent receipts to be lost. The fix adds `parseRuntimeFinalizationJournal()` which skips malformed lines and recovers all valid dispatch finalization commands, allowing the runtime to gracefully recover from corruption and replay pending operations without data loss.
+- **Newline-isolated journal appends (#3893):** New dispatch finalization records are now prepended with a newline separator, ensuring they remain isolable even if a previous append was incomplete. Combined with tolerant parsing, this prevents cascading failures where one corrupted entry blocks recovery of all subsequent entries.
+- **Comprehensive test coverage (#3893):** New test suite (`dispatch-finalization-journal.test.ts`) validates recovery from various corruption scenarios: torn lines, null entries, array entries, and unterminated tails. Tests confirm that valid commands are preserved and replayed correctly while malformed lines are safely skipped.
 
 ## Compatibility
 
-- No breaking API changes; setup security improvement only.
-- **macOS users:** If you hit "outside managed scope" errors on v0.21.31, update to v0.21.32 to restore setup functionality.
-- Existing sessions remain unaffected unless they were broken by v0.21.31's regression.
-- Setup now succeeds on symlink-heavy systems while maintaining symlink-destination refusal (the v0.21.31 behavior) for managed paths.
+- No breaking API changes; dispatch recovery improvement only.
+- **Team runtime users:** If the runtime crashed during dispatch finalization writes in earlier versions, upgrade to v0.21.33 to recover any pending operations. Recovery is automatic and requires no configuration.
+- Existing sessions remain unaffected unless they were interrupted by runtime crashes and had unrecovered dispatch finalizations.
+- The fix improves resilience without changing the dispatch API contract.
 
 ## Validation
 
-- Pinned candidate `44d33163fd5512a143eaedb6f2377a816f819a2a` passed CI run 39878502256: 17 checks succeeded, 8 conditional checks skipped, no failures (verified at 01:17Z on 2026-10-23).
+- Pinned candidate `fa9b223d8f9fe961a26f048f2132397ccdf7a938` passed CI run 39913485838: 17 checks succeeded, 8 conditional checks skipped, no failures (verified at 07:17Z on 2026-10-23).
 - Both macOS Ralplan preflight security jobs PASSED (not cancelled or failed).
-- All local gates pass: build, typecheck, lint, and setup symlink tests.
+- All local gates pass: build, typecheck, lint, and dispatch finalization journal recovery tests.
 - All code review findings addressed.
 - Ready for merge and release.
 
@@ -31,13 +29,13 @@ This release restores valid macOS and other symlink-heavy systems to working ord
 
 | PR | Author | Title |
 |---|---|---|
-| [#3890](https://github.com/Yeachan-Heo/oh-my-codex/pull/3890) | @gajae-gajae | fix(setup): canonicalize scope roots and destinations, validate project dirs against their own roots, migrate legacy skill receipt, sanitize Windows backup paths, detect dangling symlinks |
+| [#3893](https://github.com/Yeachan-Heo/oh-my-codex/pull/3893) | @shenyankm | fix: recover team dispatch finalizations from torn journal lines |
 
 ## Contributors
 
-Thanks to @gajae-gajae for the regression fix, and @Claude Code for release validation.
+Thanks to @shenyankm for the dispatch recovery fix, and @Claude Code for release validation.
 
-**Full Changelog**: [`v0.21.31...v0.21.32`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.31...v0.21.32)
+**Full Changelog**: [`v0.21.32...v0.21.33`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.32...v0.21.33)
 
 —
 *[repo owner's gaebal-gajae (clawdbot) 🦞]*
