@@ -518,7 +518,8 @@ async function prepareSubmodulesForWorktreeRemoval(worktreePath: string, recover
   // preserve it to avoid destroying work that git add would checkpoint.
   const evidencePath = join(worktreePath, '.omx/evidence');
   const headStatus = await git(['status', '--porcelain', '--', '.omx/evidence']).catch(() => '');
-  if (!headStatus.trim()) {
+  const isTracked = (await git(['ls-files', '--cached', '.omx/evidence']).catch(() => '')).trim().length > 0;
+  if (!headStatus.trim() && !isTracked) {
     // Only remove if it's not tracked or staged
     await rm(evidencePath, { recursive: true, force: true }).catch(() => {});
   }
@@ -539,7 +540,9 @@ async function prepareSubmodulesForWorktreeRemoval(worktreePath: string, recover
   // Moving whole checkouts retains local data without deinit's writes to shared repository config.
   const moves = checkouts.map(path => ({ original: join(worktreePath, path), saved: join(recovery.directory!, 'checkouts', path), checkout: true }));
   if (existsSync(modules)) moves.push({ original: modules, saved: join(recovery.directory, 'modules'), checkout: false });
-  await fsPromises.writeFile(join(recovery.directory, 'recovery.json'), JSON.stringify(moves));
+  // Include worktreePath to bind recovery journal to this worktree (P2 #4364260549)
+  const recoveryMetadata = { worktreePath, moves };
+  await fsPromises.writeFile(join(recovery.directory, 'recovery.json'), JSON.stringify(recoveryMetadata));
   for (const move of moves) {
     await fsPromises.mkdir(dirname(move.saved), { recursive: true });
     await fsPromises.rename(move.original, move.saved);
@@ -573,13 +576,16 @@ async function restoreSubmodules(recovery: SubmoduleRecovery): Promise<void> {
  * Replaying it ensures submodules are restored before any git status/add operations.
  * Completed archives are skipped (marked with .completed) to avoid destroying
  * worker-local commits that were moved from a removed worktree.
+ * Returns true if all recovery journals were successfully replayed or didn't exist;
+ * returns false if any recovery remained unresolved, indicating shutdown should abort.
  */
-export async function replaySubmoduleRecovery(worktreePath: string, repoRoot: string): Promise<void> {
+export async function replaySubmoduleRecovery(worktreePath: string, repoRoot: string): Promise<boolean> {
   const commonDir = resolve(repoRoot, (await execFilePromise('git', ['rev-parse', '--git-common-dir'], {
     cwd: worktreePath, encoding: 'utf-8',
   })).stdout.trim());
   const recoveryRoot = join(commonDir, 'omx-submodule-recovery');
-  if (!existsSync(recoveryRoot)) return;
+  if (!existsSync(recoveryRoot)) return true; // No recovery needed
+  let anyRecoveryUnresolved = false;
   
   const archives = await fsPromises.readdir(recoveryRoot).catch(() => []);
   for (const archive of archives) {
@@ -593,16 +599,37 @@ export async function replaySubmoduleRecovery(worktreePath: string, repoRoot: st
     
     try {
       const content = await fsPromises.readFile(recoveryJsonPath, 'utf-8');
-      const moves = JSON.parse(content) as Array<{ original: string; saved: string; checkout: boolean }>;
+      const parsed = JSON.parse(content) as unknown;
+      
+      // Handle both old format (array) and new format (object with metadata)
+      const moves = (Array.isArray(parsed) 
+        ? parsed 
+        : (parsed as { worktreePath?: string; moves?: unknown[] }).moves || []
+      ) as Array<{ original: string; saved: string; checkout: boolean }>;
+      const storedWorktreePath = !Array.isArray(parsed) && (parsed as { worktreePath?: string }).worktreePath;
+      
+      // P2 #4364260549: Only replay journals for the current worktree
+      if (storedWorktreePath && storedWorktreePath !== worktreePath) {
+        continue; // Skip journals from other worktrees
+      }
       
       let anyMovesFailed = false;
       // Restore all submodules from this recovery directory
       for (const move of [...moves].reverse()) {
         try {
+          // P2 #4364260546: Check if saved path still exists; if not, move was already restored
+          if (!existsSync(move.saved)) {
+            continue; // This move was already successfully restored in a prior replay
+          }
+          
           if (move.checkout) await fsPromises.rmdir(move.original).catch((error: NodeJS.ErrnoException) => {
             if (error.code !== 'ENOENT') throw error;
           });
-          if (existsSync(move.original)) continue; // Already restored
+          if (existsSync(move.original)) {
+            // Destination exists but move was skipped; preserve recovery for retry
+            anyMovesFailed = true;
+            continue;
+          }
           await fsPromises.rename(move.saved, move.original);
         } catch (error) {
           // Log but continue - we want to restore as much as possible
@@ -615,11 +642,15 @@ export async function replaySubmoduleRecovery(worktreePath: string, repoRoot: st
       // Otherwise preserve it for the next shutdown attempt
       if (!anyMovesFailed) {
         await fsPromises.rm(recoveryDir, { recursive: true }).catch(() => {});
+      } else {
+        anyRecoveryUnresolved = true;
       }
     } catch (error) {
       process.stderr.write(`[team/worktree] failed to replay recovery journal: ${String(error)}\n`);
+      anyRecoveryUnresolved = true;
     }
   }
+  return !anyRecoveryUnresolved;
 }
 
 /**

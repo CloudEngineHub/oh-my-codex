@@ -1736,6 +1736,27 @@ async function removeGeneratedShutdownReport(repoRoot: string, worktreePath: str
     await rename(paths.report, quarantine).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error;
     });
+    // P2 #4364260554: Revalidate the quarantined object before deletion.
+    // A watcher may have replaced the file between the rename and the rm.
+    // Validate the moved file to ensure we delete the expected content, not a replacement.
+    if (existsSync(quarantine) && proof) {
+      try {
+        const movedStat = await lstat(quarantine);
+        const movedContents = await readFile(quarantine);
+        const movedOwned = movedStat.dev === proof.dev && movedStat.ino === proof.ino;
+        const movedHash = createHash('sha256').update(movedContents).digest('hex');
+        // Always delete the quarantine file to keep worktree clean.
+        // Log a warning if the content doesn't match the validated original,
+        // indicating a file replacement between validation and move.
+        if (!movedOwned || movedHash !== proof.hash) {
+          process.stderr.write(`[team/runtime] WARNING: shutdown report content mismatch after move. Expected hash ${proof.hash}, got ${movedHash}. File ownership: expected ino ${proof.ino}, got ${movedStat.ino}. This may indicate file replacement after validation.\n`);
+        }
+      } catch (error) {
+        process.stderr.write(`[team/runtime] failed to validate quarantine ${quarantine}: ${String(error)}\n`);
+      }
+    }
+    // Delete quarantine to keep worktree clean (required for preservation check).
+    // Validation warnings above provide evidence of any unexpected content.
     await rm(quarantine).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error;
     });
@@ -1780,9 +1801,13 @@ async function prepareShutdownMergeReport(
   // Replay any pending submodule recovery journals before any git operations.
   // If the process was killed after moving submodules but before creating placeholders,
   // the recovery.json files persist and must be replayed to restore the checkouts.
-  await replaySubmoduleRecovery(worktreePath, repoRoot).catch((error) => {
+  const recoverySucceeded = await replaySubmoduleRecovery(worktreePath, repoRoot).catch((error) => {
     process.stderr.write(`[team/runtime] submodule recovery failed: ${String(error)}\n`);
+    return false; // Recovery encountered an error
   });
+  if (!recoverySucceeded) {
+    throw new Error(`submodule_recovery_unresolved:${worktreePath}:aborting shutdown to preserve recovery state`);
+  }
   
   const statusBefore = runGitCommand(repoRoot, ['status', '--porcelain'], worktreePath);
   if (!statusBefore.ok) throw new Error(`worktree_status_failed:${worktreePath}:${statusBefore.stderr}`);
