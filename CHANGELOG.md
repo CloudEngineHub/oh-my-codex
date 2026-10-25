@@ -6,7 +6,7 @@ All notable changes to this project are documented in this file.
 
 ## [0.21.36] - 2026-10-25
 
-Patch release for native-hook CLI diagnostic log routing (4 commits, 12 files, +371/−32; PR #3909).
+Patch release for native-hook CLI diagnostic log routing (5 commits, 12 files, +373/−32; PR #3909).
 
 ### Fixed
 
