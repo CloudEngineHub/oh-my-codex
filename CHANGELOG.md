@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.36] - 2026-10-25
+
+Patch release for native-hook CLI diagnostic log routing (4 commits, 12 files, +371/−32; PR #3909).
+
+### Fixed
+
+- **NATIVE HOOK LOGGING:** Route native-hook CLI error diagnostics through `omxLogsDir`, honoring `OMX_ROOT` (which takes precedence) or `OMX_STATE_ROOT` while preserving the project `.omx/logs` default when neither is set (#3909, @Yeachan-Heo; fixes #3908).
+
+Full inventory, compatibility notes, and verification: [release notes](docs/release-notes-0.21.36.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.35...v0.21.36
+
 ## [0.21.34] - 2026-10-24
 
 Patch release for worker worktree shutdown preservation (1 commit, 7 files, +1413/−57; PR #3896).
