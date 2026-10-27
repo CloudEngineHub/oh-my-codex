@@ -6,7 +6,7 @@ All notable changes to this project are documented in this file.
 
 ## [0.21.37] - 2026-10-27
 
-Patch release for npm global-install ownership detection and clearer plugin-cache completion-marker diagnostics (10 commits, 11 files, +423/−58; PRs #3922 and #3923).
+Patch release for npm global-install ownership detection and clearer plugin-cache completion-marker diagnostics (source range: 10 commits, 11 files, +423/−58; PRs #3922 and #3923).
 
 ### Fixed
 

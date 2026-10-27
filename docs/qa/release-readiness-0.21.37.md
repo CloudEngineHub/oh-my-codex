@@ -35,6 +35,8 @@ d39ae34d docs(release): record v0.21.36 publication evidence
 
 At the pinned source candidate, `git diff --stat v0.21.36..18963b5604aa296d4fe8a019651d0ddef9584106` reports **11 files changed, 423 insertions(+), 58 deletions(-)**. The diff includes the new behavior/tests, dependency lock updates, 0.21.37 metadata, and an update to the previous release's readiness evidence. This is the pinned source-range stat; release collateral on the release branch is tracked separately in the final PR evidence below.
 
+The complete release branch currently contains 12 commits in `v0.21.36..HEAD`; `git diff --stat v0.21.36..HEAD` reports **15 files changed, 621 insertions(+), 73 deletions(-)**, including the four release-collateral files. This is the full-range stat for the current release-collateral head; any later readiness-evidence updates will be included in the final PR-head range stat.
+
 ## PR inventory
 
 | PR | Author | Title | Status / scope |
