@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.38] - 2026-10-27
+
+Patch release for setup refresh self-healing stale OMX-owned plugin hook trust keys (8 commits, 9 files, +279/−23; PR #3924 plus release-train PRs #3926–#3929).
+
+### Fixed
+
+- **PLUGIN HOOK TRUST REFRESH:** After a plugin cache rebuild, setup refresh retires stale trusted hashes from canonical OMX plugin-scoped Codex hook trust records instead of failing with `managed_trust_key_conflict`. Third-party and malformed trust state remains fail-closed (#3924; fixes #3918).
+
+Full inventory, compatibility notes, and verification: [release notes](docs/release-notes-0.21.38.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.37...v0.21.38
+
 ## [0.21.37] - 2026-10-27
 
 Patch release for npm global-install ownership detection and clearer plugin-cache completion-marker diagnostics (source range: 10 commits, 11 files, +423/−58; PRs #3922 and #3923).
