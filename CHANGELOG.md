@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.37] - 2026-10-27
+
+Patch release for npm global-install ownership detection and clearer plugin-cache completion-marker diagnostics (source range: 10 commits, 11 files, +423/−58; PRs #3922 and #3923).
+
+### Fixed
+
+- **NPM GLOBAL OWNERSHIP:** Recognize npm-managed global installs when npm's configured global prefix differs from the active Node runtime path, while retaining fail-closed ownership validation (#3922; fixes #3920).
+- **PLUGIN-CACHE DIAGNOSTICS:** Distinguish malformed completion markers, marker-version mismatches, and claim-digest mismatches in setup/doctor output. This changes diagnostics only; provenance semantics are unchanged (#3923; fixes #3921).
+
+### Dependencies
+
+- Update the MCP SDK runtime dependency to 1.32.2 (#3917).
+- Update Biome to 2.6.2 as a development dependency (#3916).
+
+Full inventory, compatibility notes, and verification: [release notes](docs/release-notes-0.21.37.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.36...v0.21.37
+
 ## [0.21.36] - 2026-10-25
 
 Patch release for native-hook CLI diagnostic log routing (5 commits, 12 files, +373/−32; PR #3909).
