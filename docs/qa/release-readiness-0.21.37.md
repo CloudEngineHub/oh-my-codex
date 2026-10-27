@@ -1,0 +1,110 @@
+# Release Readiness: v0.21.37
+
+**Release Date:** 2026-10-27<br>
+**Released By:** gaebal-gajae (autonomous release)<br>
+**Baseline:** v0.21.36 (npm latest 0.21.36; tag commit `fe09b80e76e85105c10840730bdca5397247a9e4`)<br>
+**Range:** [`v0.21.36...v0.21.37`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.36...v0.21.37)
+
+## Summary
+
+**Patch release:** npm global-install ownership detection now handles a custom global prefix, and plugin-cache diagnostics distinguish malformed completion markers from marker-version and claim-digest mismatches.
+
+- **Fix:** Recognize npm-managed global installs when npm's global prefix differs from the active Node runtime path, while keeping ownership validation fail-closed (#3922; fixes #3920).
+- **Fix:** Report malformed plugin-cache completion markers, marker-version mismatches, and claim-digest mismatches separately in setup/doctor; provenance semantics are unchanged (#3923; fixes #3921).
+- **Dependencies:** @modelcontextprotocol/sdk 1.32.1 → 1.32.2 (runtime, #3917); @biomejs/biome 2.5.15 → 2.6.2 (development only, #3916).
+- **Breaking changes:** None.
+
+## Compare-range inventory
+
+Previous released tag `v0.21.36` is an ancestor of pinned dev candidate `18963b5604aa296d4fe8a019651d0ddef9584106`. `origin/main` (`6b1c110ec06b45a5644ceb6ee60788f7ccae6c46`) is already an ancestor of the candidate, so merging it into the release branch was a no-op.
+
+`git log --oneline --decorate v0.21.36..18963b5604aa296d4fe8a019651d0ddef9584106`:
+
+```text
+18963b56 fix(plugin-cache): distinguish claim digest diagnostics (#3921) (#3923)
+ed1606dd fix(update): detect npm ownership with custom global prefix (#3922)
+f68a3b2f chore(deps-dev): bump @biomejs/biome from 2.5.15 to 2.6.2
+fd36388a chore(deps): bump @modelcontextprotocol/sdk from 1.32.1 to 1.32.2
+f6c7696a Merge pull request #3914 from Yeachan-Heo/back-merge/0.21.36-readiness
+6b1c110e Merge pull request #3913 from Yeachan-Heo/release-evidence/0.21.36
+d39ae34d docs(release): record v0.21.36 publication evidence
+6194ce4f Merge pull request #3912 from Yeachan-Heo/version-bump/0.21.37
+632119d4 chore(dev): bump base version to 0.21.37
+53dc9e1b Merge pull request #3911 from Yeachan-Heo/back-merge/v0.21.36
+```
+
+At the pinned source candidate, `git diff --stat v0.21.36..18963b5604aa296d4fe8a019651d0ddef9584106` reports **11 files changed, 423 insertions(+), 58 deletions(-)**. The diff includes the new behavior/tests, dependency lock updates, 0.21.37 metadata, and an update to the previous release's readiness evidence. This is the pinned source-range stat; release collateral on the release branch is tracked separately in the final PR evidence below.
+
+## PR inventory
+
+| PR | Author | Title | Status / scope |
+|---|---|---|---|
+| [#3923](https://github.com/Yeachan-Heo/oh-my-codex/pull/3923) | @Yeachan-Heo | fix(plugin-cache): distinguish claim-digest mismatch from malformed marker | Merged; fixes #3921 |
+| [#3922](https://github.com/Yeachan-Heo/oh-my-codex/pull/3922) | @Yeachan-Heo | fix(update): detect npm ownership with a custom global prefix | Merged; fixes #3920 |
+| [#3917](https://github.com/Yeachan-Heo/oh-my-codex/pull/3917) | @dependabot | chore(deps): bump @modelcontextprotocol/sdk from 1.32.1 to 1.32.2 | Merged; runtime dependency |
+| [#3916](https://github.com/Yeachan-Heo/oh-my-codex/pull/3916) | @dependabot | chore(deps-dev): bump @biomejs/biome from 2.5.15 to 2.6.2 | Merged; development dependency |
+| [#3914](https://github.com/Yeachan-Heo/oh-my-codex/pull/3914) | @Yeachan-Heo | chore(back-merge): v0.21.36 readiness evidence to dev | Merged; internal back-merge |
+| [#3913](https://github.com/Yeachan-Heo/oh-my-codex/pull/3913) | @Yeachan-Heo | docs(release): record v0.21.36 publication evidence | Merged; internal release evidence |
+| [#3912](https://github.com/Yeachan-Heo/oh-my-codex/pull/3912) | @Yeachan-Heo | chore(dev): bump base version to 0.21.37 | Merged; development version metadata |
+| [#3911](https://github.com/Yeachan-Heo/oh-my-codex/pull/3911) | @Yeachan-Heo | chore(back-merge): v0.21.36 to dev | Merged; internal back-merge, no content changes |
+
+## Not included / known gaps
+
+- #3924 (fix for #3918) remains in its separate review and is not included in this release; it is planned for a later release. It was not pulled into the release branch.
+- #3898 (live-pin fix) remains blocked on an owner design decision; #3900 and #3907 are open drafts. On Codex 0.164.0, `.omx-live-pin` files in the plugin cache can invalidate hook approval. The workaround posted in #3898 disables the `oh-my-codex-local` plugin.
+
+## Version synchronization
+
+All coupled version surfaces already read `0.21.37`; no version bump was added during release preparation.
+
+| Surface | Value |
+|---|---|
+| `package.json` | 0.21.37 |
+| `package-lock.json` root package and package entry | 0.21.37 |
+| `Cargo.toml` workspace package | 0.21.37 |
+| `Cargo.lock` OMX workspace packages | 0.21.37 |
+| `plugins/oh-my-codex/.codex-plugin/plugin.json` | 0.21.37 |
+| `src/cli/__tests__/version-sync-contract.test.ts` | verifies package/plugin/Cargo workspace alignment |
+
+No stale `0.21.36` values remain in package, Cargo, plugin metadata, source version constants, or tests; references in historical release records and this release's baseline/compare range are intentional.
+
+## Local gates
+
+All local gates below passed on the release branch at source candidate `18963b5604aa296d4fe8a019651d0ddef9584106`:
+
+- ✓ `npm ci` (172 packages; the `prepare` script's build completed).
+- ✓ `npm run build`.
+- ✓ `npm run check:no-unused`.
+- ✓ `npm run lint` (890 files, no violations; Biome printed a deprecation warning for the existing `linter.recommended` config field).
+- ✓ `cargo check --workspace --locked`.
+- ✓ `npm run build:runtime`.
+- ✓ `npm run verify:plugin-bundle` (24 canonical skill directories and plugin metadata).
+- ✓ Focused compiled tests: `update.test.js`, `plugin-cache-symlink-provenance-3552.test.js`, `doctor-warning-copy.test.js`, `version-sync-contract.test.js`, and `generate-release-body.test.js` via `node dist/scripts/run-test-files.js`; all test files exited successfully.
+- ✓ `git diff --check`.
+- Final release-body generation will be recorded before tag push. The generator needs a resolvable `v0.21.37` ref; the direct pre-tag attempt before that ref exists correctly refused to render.
+
+## CI gates
+
+Pinned dev candidate: `18963b5604aa296d4fe8a019651d0ddef9584106`.
+
+- Dev push CI run [40535642484](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40535642484) completed successfully. Latest-per-name check runs: **17 success, 8 skipped, 0 failures**.
+- macOS Ralplan preflight security passed on Node 20 (job [122300847593](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40535642484/job/122300847593)) and Node 26.5.1 (job [122300847597](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40535642484/job/122300847597)).
+- CI Status check passed (job [122309452327](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40535642484/job/122309452327)).
+- Latest-per-name totals were computed from the commit checks endpoint by grouping check runs by name and selecting the greatest check-run ID; no failures or pending checks remained.
+
+## Release PR, merge, and publication
+
+- Release PR: pending creation.
+- Exact-head review/CI and inline-thread merge gate: pending.
+- Main merge commit and latest-per-name CI: pending.
+- Annotated tag and tag-triggered Release workflow/assets: pending.
+- npm publication/readback and non-draft GitHub Release verification: pending.
+
+## Back-merge and cleanup
+
+- Back-merge PR from `main` to `dev` using a merge commit: pending.
+- Back-merge CI and inline-thread gate: pending.
+- Release branch cleanup: pending.
+
+—
+*[repo owner's gaebal-gajae (clawdbot) 🦞]*
