@@ -35,7 +35,7 @@ d39ae34d docs(release): record v0.21.36 publication evidence
 
 At the pinned source candidate, `git diff --stat v0.21.36..18963b5604aa296d4fe8a019651d0ddef9584106` reports **11 files changed, 423 insertions(+), 58 deletions(-)**. The diff includes the new behavior/tests, dependency lock updates, 0.21.37 metadata, and an update to the previous release's readiness evidence. This is the pinned source-range stat; release collateral on the release branch is tracked separately in the final PR evidence below.
 
-The complete release branch currently contains 12 commits in `v0.21.36..HEAD`; `git diff --stat v0.21.36..HEAD` reports **15 files changed, 621 insertions(+), 73 deletions(-)**, including the four release-collateral files. This is the full-range stat for the current release-collateral head; any later readiness-evidence updates will be included in the final PR-head range stat.
+The initial release-collateral branch head contained 12 commits in `v0.21.36..HEAD`; `git diff --stat v0.21.36..HEAD` reported **15 files changed, 621 insertions(+), 73 deletions(-)**, including the four release-collateral files. Release PR and later readiness evidence are recorded separately below and will be included in the final PR-head range stat.
 
 ## PR inventory
 
@@ -82,6 +82,7 @@ All local gates below passed on the release branch at source candidate `18963b56
 - ✓ `npm run build:runtime`.
 - ✓ `npm run verify:plugin-bundle` (24 canonical skill directories and plugin metadata).
 - ✓ Focused compiled tests: `update.test.js`, `plugin-cache-symlink-provenance-3552.test.js`, `doctor-warning-copy.test.js`, `version-sync-contract.test.js`, and `generate-release-body.test.js` via `node dist/scripts/run-test-files.js`; all test files exited successfully.
+- ✓ After the first release-PR CI run failed one pre-existing real-tmux assertion, the entire `launch-fallback.test.js` file passed locally (39 tests, 0 failures), including the specific detached-HUD restoration test.
 - ✓ `git diff --check`.
 - Final release-body generation will be recorded before tag push. The generator needs a resolvable `v0.21.37` ref; the direct pre-tag attempt before that ref exists correctly refused to render.
 
@@ -96,8 +97,10 @@ Pinned dev candidate: `18963b5604aa296d4fe8a019651d0ddef9584106`.
 
 ## Release PR, merge, and publication
 
-- Release PR: pending creation.
-- Exact-head review/CI and inline-thread merge gate: pending.
+- Release PR [#3925](https://github.com/Yeachan-Heo/oh-my-codex/pull/3925), initial head `9d95e0789ff62b82e19c0b7256975decc4adb609`.
+- Initial PR CI run [40542865035](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40542865035) had 25 success, 1 skipped, and 1 failure. The sole failed job was `Test (Node 20 / cli-core-rest)` (job [122325983906](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40542865035/job/122325983906)); one unrelated existing tmux test in `launch-fallback.test.js` observed HUD height 7 instead of the expected 2. That test file is unchanged by this release diff; the pinned dev candidate's CI was green, and the same full file passed locally after the failure. The failed PR run is not treated as green; a new exact-head CI result is required before merge.
+- Codex code review on initial PR head `9d95e0789ff62b82e19c0b7256975decc4adb609` reported no major issues and reviewed commit `9d95e0789f`. No inline findings were returned. The new release-readiness evidence commit requires a review against its updated exact head.
+- Exact-updated-head review/CI and inline-thread merge gate: pending.
 - Main merge commit and latest-per-name CI: pending.
 - Annotated tag and tag-triggered Release workflow/assets: pending.
 - npm publication/readback and non-draft GitHub Release verification: pending.
