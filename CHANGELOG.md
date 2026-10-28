@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.39] - 2026-10-28
+
+Patch release for GPT-6.1 Terra model catalog recognition and canonical detached-session state roots (7 commits, 25 files, +628/−99; PR #3931, #3933, and #3935–#3938 plus release preparation).
+
+### Added
+
+- **GPT-6.1 TERRA MODEL RECOGNITION:** recognize `gpt-6.1-terra` in the known Codex model catalog (#3933).
+
+### Fixed
+
+- **DETACHED SESSION STATE ROOTS:** publish the canonical state root in detached leader records so strict session reuse accepts aliased roots (#3935).
+
+### Test reliability
+
+- Isolate each test file's home directory, wait for VSCode log stream completion, and synchronize tmux/team fixture event boundaries (#3936–#3938).
+
+Full inventory, compatibility notes, and verification: [release notes](docs/release-notes-0.21.39.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.38...v0.21.39
+
 ## [0.21.38] - 2026-10-27
 
 Patch release for setup refresh self-healing stale OMX-owned plugin hook trust keys (8 commits, 9 files, +279/−23; PR #3924 plus release-train PRs #3926–#3929).
