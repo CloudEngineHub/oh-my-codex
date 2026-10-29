@@ -9,6 +9,7 @@
 ## Fixes and compatibility
 
 - Model-selection documentation now matches the implementation (#3951).
+- Include file change time in history-artifact version validation so same-inode content mutations that restore size and modification time are discarded before project-launch publication (#3958).
 - No breaking API changes.
 - Development package metadata remains synchronized at `0.21.41`; this release does not double-bump the version (#3953).
 
@@ -27,6 +28,7 @@
 | [#3953](https://github.com/Yeachan-Heo/oh-my-codex/pull/3953) | @Yeachan-Heo | chore: back-merge main (v0.21.40) to dev and bump to 0.21.41 | Align dev with shipped main and synchronize development version metadata |
 | [#3954](https://github.com/Yeachan-Heo/oh-my-codex/pull/3954) | @Yeachan-Heo | back-merge: main to dev for v0.21.40 | Internal follow-up merge aligning main and dev |
 | [#3956](https://github.com/Yeachan-Heo/oh-my-codex/pull/3956) | @Yeachan-Heo | feat(#3955): Add configurable custom quality gates via .omx-config | Add stage-specific configuration, listing CLI, Ralplan integration, tests, and workflow guidance |
+| [#3958](https://github.com/Yeachan-Heo/oh-my-codex/pull/3958) | @Yeachan-Heo | fix(history): detect same-mtime content mutations during publication | Reject changed history bytes when file size and modification time are restored |
 
 ## Validation evidence
 

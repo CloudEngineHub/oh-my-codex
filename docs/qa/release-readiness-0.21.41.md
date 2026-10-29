@@ -13,7 +13,7 @@ The range also includes the model-selection documentation correction (#3951), v0
 
 ## Compare-range metrics
 
-The pinned dev range `v0.21.40..4a0f645b898e74d381ee7d4da1ced0bf26280896` contains **6 commits, 31 files changed, 1,838 insertions(+), and 64 deletions(-)**. After adding the release-preparation commit, the final candidate range contains **7 commits, 35 files changed, 1,981 insertions(+), and 80 deletions(-)** (`git diff --stat v0.21.40..release/omx-0.21.41`). The release-preparation commit adds the required changelog, release body, notes, and readiness evidence.
+The pinned dev range `v0.21.40..4a0f645b898e74d381ee7d4da1ced0bf26280896` contains **6 commits, 31 files changed, 1,838 insertions(+), and 64 deletions(-)**. The release candidate now contains **8 commits, 35 files changed, 1,998 insertions(+), and 84 deletions(-)** (`git diff --stat v0.21.40..release/omx-0.21.41`), including release collateral and the main-CI Windows history-race correction.
 
 ## PR inventory
 
@@ -65,7 +65,9 @@ Pinned dev candidate: `4a0f645b898e74d381ee7d4da1ced0bf26280896`.
 
 ## Release PR, publication, and back-merge
 
-Pending. No release PR has been merged, no `v0.21.41` tag has been pushed, and no npm or GitHub Release publication is claimed. Release PR review threads, release checks, tag-triggered Release run, trusted npm dispatch/readback, evidence PR, and merge-commit back-merge proof will be recorded after those steps complete.
+The initial release PR [#3957](https://github.com/Yeachan-Heo/oh-my-codex/pull/3957) merged at `b4a02c194acb0a344c7c3f7254e71740fb368932`. Its exact-head Codex review completed with zero findings, the in-thread reply gate printed `[]`, and PR CI passed (run [40922096829](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40922096829): 24 success, 1 skipped, 0 failed; both macOS preflights and CI Status passed).
+
+Main push CI run [40924728006](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40924728006) failed the Windows history-materialization test `skips same-inode history content mutations during file publication`: same-size content was changed and the original modification time restored, while the implementation compared only file identity, size, and modification time. This exposed a real race-detection gap even though the test passed on the first dev and release-PR runs. Follow-up PR [#3958](https://github.com/Yeachan-Heo/oh-my-codex/pull/3958) includes `ctimeMs` in history file-version comparisons. The focused regression test passes locally; the PR's exact-head Windows job and subsequent main CI must pass before tagging. No tag or publication has occurred.
 
 —
 *[repo owner's gaebal-gajae (clawdbot) 🦞]*
