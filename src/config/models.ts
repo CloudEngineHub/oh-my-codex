@@ -22,7 +22,10 @@
  *   }
  * }
  *
- * Resolution: mode-specific > "default" key > OMX_DEFAULT_FRONTIER_MODEL > DEFAULT_FRONTIER_MODEL
+ * Resolution:
+ * - getModelForMode: models[mode] > models.default > main default (shell env > .omx-config.json env > config.toml root model > built-in default)
+ * - Native TOML model: agentModels override > built-in-provider exactModel pin; otherwise no model field (inherit at runtime)
+ * - Team role fallback: agentModels > `*-low` spark path > exactModel pin (provider-independent) > executor/main > modelClass defaults
  */
 
 import { parse as parseToml } from '@iarna/toml';
