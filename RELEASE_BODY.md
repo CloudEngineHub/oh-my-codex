@@ -1,43 +1,43 @@
-# oh-my-codex 0.21.39
+# oh-my-codex 0.21.40
 
-`0.21.39` is a patch release that recognizes GPT-6.1 Terra in the known Codex model catalog and fixes canonical state-root publication for detached session leaders.
+`0.21.40` is a patch release that fixes OMX session-pointer ownership when a long-lived managed Codex app-server is running and improves tmux shim-log test reliability.
 
 ## Highlights
 
-- **GPT-6.1 TERRA MODEL RECOGNITION (#3933):** Add `gpt-6.1-terra` to the known Codex model catalog and routing reference; explicit model strings and existing model defaults remain unchanged.
-- **CANONICAL DETACHED-SESSION ROOTS (#3935):** Record the canonical state root held by the leader's binding so the strict reuse guard recognizes sessions started through an aliased or symlinked root.
+- **MANAGED CODEX SESSION POINTER OWNERSHIP (#3949; fixes #3946):** A verified `codex app-server --managed-daemon` process is no longer republished as the OMX session owner or allowed to block `omx resume` and fresh launches. `omx session pointer recover` and doctor provide a working recovery action. Live interactive OMX owners remain protected; unknown or mismatched process identity fails closed. Reported by @nascyimento.
 
 ## Fixes and compatibility
 
 - No breaking API changes.
-- Test harness reliability improved: per-file HOME isolation (#3936), VSCode log-write completion synchronization (#3937), and deterministic tmux/team fixture boundaries (#3938).
+- Preserve completed, trailerless non-tail tmux shim-log records when command writes interleave; discard only an unfinished final segment (#3941). This is test-harness coverage, not a runtime behavior change.
+- The release-train commits synchronize the package, npm lockfile, Cargo workspace/lockfile, and plugin metadata at `0.21.40` (#3943).
 
 ## Known issues and exclusions
 
-- #3898 (live-pin fix) remains held for the owner design decision. On Codex 0.164.0, `.omx-live-pin` files in the plugin cache can invalidate hook approval; the workaround posted in #3898 disables the `oh-my-codex-local` plugin. Related PRs #3900 and #3907 remain open and are not included in this release.
-
-## Validation
-
-- Pinned dev candidate `4c98c4775b0d33f78bdee02bb15ce43aa0505470` passed CI run [40715501337](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40715501337): latest-per-name checks were 18 success, 7 skipped, and 0 failures.
-- macOS Ralplan preflight security passed on Node 20 (job [122912178834](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40715501337/job/122912178834)) and Node 26.5.1 (job [122912178801](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40715501337/job/122912178801)); CI Status passed (job [122922743319](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40715501337/job/122922743319)).
-- Release-branch local gates and review/publication evidence are recorded in `docs/qa/release-readiness-0.21.39.md`.
+- #3898 remains held for the owner design decision. Related PRs #3939, #3900, and #3907 remain excluded, as does held PR #3915.
+- No other user-facing changes in the compare range are excluded.
 
 ## Merged PR inventory
 
 | PR | Author | Title | Impact |
 |---|---|---|---|
-| [#3933](https://github.com/Yeachan-Heo/oh-my-codex/pull/3933) | @ev78394 | feat(models): recognize GPT-6.1 Terra | Recognize `gpt-6.1-terra` in the known Codex model catalog |
-| [#3935](https://github.com/Yeachan-Heo/oh-my-codex/pull/3935) | @ev78394 | fix: publish canonical detached-session state roots | Store canonical binding root in detached leader state |
-| [#3936](https://github.com/Yeachan-Heo/oh-my-codex/pull/3936) | @ev78394 | test: isolate caller homes for each test file | Prevent caller HOME/USERPROFILE from contaminating tests |
-| [#3937](https://github.com/Yeachan-Heo/oh-my-codex/pull/3937) | @ev78394 | test: wait for VSCode log stream completion | Assert VSCode output only after log writes finish |
-| [#3938](https://github.com/Yeachan-Heo/oh-my-codex/pull/3938) | @ev78394 | test: synchronize tmux logs and team event fixtures | Make fixture event/log boundaries deterministic |
-| [#3931](https://github.com/Yeachan-Heo/oh-my-codex/pull/3931) | @Yeachan-Heo | back-merge: main to dev for v0.21.38 | Internal back-merge; aligns dev with shipped main |
+| [#3941](https://github.com/Yeachan-Heo/oh-my-codex/pull/3941) | @Yeachan-Heo | test: keep interleaved tmux shim records | Preserve complete interleaved non-tail shim records and verify unfinished-tail safety |
+| [#3943](https://github.com/Yeachan-Heo/oh-my-codex/pull/3943) | @Yeachan-Heo | chore(dev): bump base version to 0.21.40 | Synchronize development package and plugin/Cargo version surfaces |
+| [#3944](https://github.com/Yeachan-Heo/oh-my-codex/pull/3944) | @Yeachan-Heo | docs: record v0.21.39 publication evidence | Carry prior-release publication evidence onto dev |
+| [#3945](https://github.com/Yeachan-Heo/oh-my-codex/pull/3945) | @Yeachan-Heo | back-merge: main to dev for v0.21.39 | Internal merge aligning dev with the prior shipped main |
+| [#3949](https://github.com/Yeachan-Heo/oh-my-codex/pull/3949) | @Yeachan-Heo | fix(session): don't let a managed Codex daemon own the OMX session pointer | Recover from a verified managed-daemon owner without stopping it; protect live interactive owners and fail closed on uncertain identity |
+
+## Validation
+
+- Pinned dev candidate `87ace943784fa5873e5f8b39edc6686d8bbadde8` passed CI run [40824315726](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40824315726): latest-per-name checks were 18 success, 7 skipped, and 0 failures.
+- Both macOS Ralplan preflights passed: Node 20 (job [123283770572](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40824315726/job/123283770572)) and Node 26.5.1 (job [123283770409](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40824315726/job/123283770409)); CI Status passed (job [123288130258](https://github.com/Yeachan-Heo/oh-my-codex/actions/runs/40824315726/job/123288130258)).
+- Release-branch local gates and release review/publication evidence are recorded in [release readiness](docs/qa/release-readiness-0.21.40.md).
 
 ## Contributors
 
-Thanks to @ev78394 for the release changes and @Yeachan-Heo for release-train maintenance.
+Thanks to @nascyimento for reporting the managed-daemon session-pointer issue, and @Yeachan-Heo for the fix, regression coverage, and release-train maintenance.
 
-**Full Changelog**: [`v0.21.38...v0.21.39`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.38...v0.21.39)
+**Full Changelog**: [`v0.21.39...v0.21.40`](https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.39...v0.21.40)
 
 —
 *[repo owner's gaebal-gajae (clawdbot) 🦞]*
