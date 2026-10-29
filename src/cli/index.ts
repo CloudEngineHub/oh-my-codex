@@ -1479,10 +1479,13 @@ function hasSameHistoryIdentity(
 }
 
 function hasSameHistoryVersion(
-  actual: { dev: number; ino: number; size: number; mtimeMs: number },
-  expected: { dev: number; ino: number; size: number; mtimeMs: number },
+  actual: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number },
+  expected: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number },
 ): boolean {
-  return hasSameHistoryIdentity(actual, expected) && actual.size === expected.size && actual.mtimeMs === expected.mtimeMs;
+  return hasSameHistoryIdentity(actual, expected)
+    && actual.size === expected.size
+    && actual.mtimeMs === expected.mtimeMs
+    && actual.ctimeMs === expected.ctimeMs;
 }
 
 async function inspectProjectLaunchRuntimeHistoryEntry(source: string) {
@@ -1539,7 +1542,7 @@ async function persistProjectLaunchRuntimeJsonlArtifact(
   sourceRoot: string,
   destinationRoot: string,
   sourceMode: number,
-  expectedSourceStat: { dev: number; ino: number; size: number; mtimeMs: number },
+  expectedSourceStat: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number },
 ): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const destinationInspection = await inspectProjectLaunchRuntimeHistoryEntry(destination);
