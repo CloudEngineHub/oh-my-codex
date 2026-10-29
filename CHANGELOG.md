@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.40] - 2026-10-29
+
+Patch release fixes managed Codex daemon ownership of the OMX session pointer and preserves interleaved tmux shim records (8 commits, 19 files, +777/−91; PRs #3941, #3943–#3945, and #3949 plus release preparation).
+
+### Fixed
+
+- **MANAGED CODEX SESSION POINTER OWNERSHIP:** Do not let a long-lived `codex app-server --managed-daemon` block OMX session resume or fresh launches; add fail-closed pointer recovery and doctor guidance while preserving protection for live interactive OMX owners (#3949; fixes #3946, reported by @nascyimento).
+
+### Test reliability
+
+- Preserve completed non-tail tmux shim records when command writes interleave, while still discarding an incomplete final segment (#3941).
+
+Full inventory, compatibility notes, and verification: [release notes](docs/release-notes-0.21.40.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.39...v0.21.40
+
 ## [0.21.39] - 2026-10-28
 
 Patch release for GPT-6.1 Terra model catalog recognition and canonical detached-session state roots (7 commits, 25 files, +628/−99; PR #3931, #3933, and #3935–#3938 plus release preparation).
