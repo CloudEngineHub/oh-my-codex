@@ -6,11 +6,15 @@ All notable changes to this project are documented in this file.
 
 ## [0.21.41] - 2026-10-29
 
-Patch release adds per-stage custom quality gates for deep-interview, Ralplan, and code review (7 commits, 35 files, +1981/−80; PRs #3951–#3954 and #3956 plus release preparation).
+Patch release adds per-stage custom quality gates for deep-interview, Ralplan, and code review, plus same-mtime history-mutation detection (8 commits, 35 files, +1998/−84; PRs #3951–#3954, #3956, and #3958 plus release preparation).
 
 ### Added
 
 - **CONFIGURABLE CUSTOM QUALITY GATES:** Configure additional skill-based reviewers in `.omx-config.json` under `qualityGates.deep-interview`, `qualityGates.ralplan`, and `qualityGates.code-review`. Plain skill names default to blocking; objects can select blocking/advisory mode and a model override. Configured reviewers supplement the built-in review flow; advisory results are recorded without blocking, and blocking Ralplan `reject`/`iterate` verdicts feed its revise loop (#3956; requested in #3955 by @iqdoctor).
+
+### Fixed
+
+- Include file change time when validating history artifacts during project-launch publication, so same-inode, same-size content mutations with a restored modification time are discarded (#3958).
 
 ### Documentation
 
