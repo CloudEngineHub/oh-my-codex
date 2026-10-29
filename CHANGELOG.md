@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.41] - 2026-10-29
+
+Patch release adds per-stage custom quality gates for deep-interview, Ralplan, and code review (7 commits, 35 files, +1981/−80; PRs #3951–#3954 and #3956 plus release preparation).
+
+### Added
+
+- **CONFIGURABLE CUSTOM QUALITY GATES:** Configure additional skill-based reviewers in `.omx-config.json` under `qualityGates.deep-interview`, `qualityGates.ralplan`, and `qualityGates.code-review`. Plain skill names default to blocking; objects can select blocking/advisory mode and a model override. Configured reviewers supplement the built-in review flow; advisory results are recorded without blocking, and blocking Ralplan `reject`/`iterate` verdicts feed its revise loop (#3956; requested in #3955 by @iqdoctor).
+
+### Documentation
+
+- Align model-selection documentation with the implemented precedence rules (#3951).
+
+Full inventory, compatibility notes, and verification: [release notes](docs/release-notes-0.21.41.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.40...v0.21.41
+
 ## [0.21.40] - 2026-10-29
 
 Patch release fixes managed Codex daemon ownership of the OMX session pointer and preserves interleaved tmux shim records (8 commits, 19 files, +777/−91; PRs #3941, #3943–#3945, and #3949 plus release preparation).

@@ -133,7 +133,23 @@ Team mode is the structured multi-agent surface. Use it when durable staged coor
 </team_pipeline>
 
 <team_model_resolution>
-Team/Swarm worker model precedence: explicit `OMX_TEAM_WORKER_LAUNCH_ARGS`, inherited leader `--model`, then low-complexity default from `OMX_DEFAULT_SPARK_MODEL` (legacy alias: `OMX_SPARK_MODEL`). Normalize model flags to one canonical `--model <value>` entry and use `OMX_DEFAULT_FRONTIER_MODEL` / `OMX_DEFAULT_SPARK_MODEL` rather than guessing defaults.
+Team/Swarm worker model selection (for worker roles only, NOT native Codex subagents):
+
+- At launch, a per-worker `OMX_TEAM_WORKER_LAUNCH_ARGS --model` that differs from the inherited leader `--model` wins.
+- Otherwise, `.omx-config.json` `agentModels[role]` or an applicable role `exactModel` pin is selected before the inherited leader model. Team worker `exactModel` pins apply regardless of provider.
+- If neither a per-agent override nor an applicable exact pin applies, an inherited leader `--model` wins before the computed role fallback.
+- When no inherited model is available, the role fallback resolves in this order:
+  1. `.omx-config.json` `agentModels[role]` override
+  2. Role ending in `-low` → spark chain
+  3. Role `exactModel` pin (`planner`/`architect`/`researcher` → `gpt-6-astra`); Team pins apply regardless of provider
+  4. `executor` special case → frontier/main chain
+  5. Otherwise by `modelClass`: `fast` → spark; `frontier` → main; `standard` → standard lane
+
+Role defaults use `OMX_DEFAULT_FRONTIER_MODEL`, `OMX_DEFAULT_STANDARD_MODEL`, or `OMX_DEFAULT_SPARK_MODEL` as applicable; the legacy spark alias is `OMX_SPARK_MODEL`. The spark chain does not fall back to the `config.toml` root model.
+
+For native Codex subagents, model selection is different: they inherit the active `config.toml`/provider model except for pinned roles (`planner`/`architect`/`researcher` with built-in providers) and per-agent `agentModels` overrides. Environment variables like `OMX_DEFAULT_FRONTIER_MODEL` do NOT set the native TOML `model` field or change native runtime model selection; they configure Team worker fallback and mode resolution and may be reflected in generated `resolved_model` or AGENTS.md model-table metadata.
+
+Normalize model flags to one canonical `--model <value>` entry. Use `OMX_DEFAULT_FRONTIER_MODEL` / `OMX_DEFAULT_STANDARD_MODEL` / `OMX_DEFAULT_SPARK_MODEL` for Team worker defaults, not for native subagent configuration.
 </team_model_resolution>
 
 <!-- OMX:MODELS:START -->
