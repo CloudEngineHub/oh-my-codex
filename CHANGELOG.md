@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.42] - 2026-10-30
+
+Patch release makes Team and tmux status inspection read-only and improves native Codex goal reconciliation (8 commits, 30 files, +867/−116; PRs #3959–#3964).
+
+### Fixed
+
+- **READ-ONLY TEAM AND TMUX STATUS:** `omx team status` no longer runs monitor maintenance, writes state, or recovers claims; it remains usable with a read-only OMX root. When the team name is omitted, status resolves only a unique current-leader match. `omx tmux-hook status` reports missing configuration without initializing it (#3963).
+- **NATIVE CODEX GOAL RESPONSES:** Normalize structured and serialized `get_goal` response envelopes, distinguish an unavailable native tool from database/schema/context errors, and permit truthful non-terminal blocked checkpoints when goal verification is unavailable without fabricating completion (#3964).
+- **HISTORY MUTATION DETECTION:** Detect same-inode history content changes even when size and modification time are restored; do not publish the altered artifact (#3959).
+
+### Test reliability
+
+- Stabilize detached-launch and Windows platform fixtures, including per-fixture sidecar isolation (#3963).
+
+Full inventory, compatibility notes, and verification: [release notes](docs/release-notes-0.21.42.md).
+
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-codex/compare/v0.21.41...v0.21.42
+
 ## [0.21.41] - 2026-10-29
 
 Patch release adds per-stage custom quality gates for deep-interview, Ralplan, and code review, plus same-mtime history-mutation detection (8 commits, 35 files, +1998/−84; PRs #3951–#3954, #3956, and #3958 plus release preparation).
