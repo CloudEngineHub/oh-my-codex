@@ -283,6 +283,7 @@ Use `$team` when an active Ultragoal story needs coordinated parallel work.
 ### `/goal` and skill selection
 
 Start a normal strong session with `omx --madmax --xhigh` (or add `--worktree=<task>` in a git repo). Inside that session, execute directly or use `$ultragoal` for durable multi-goal runs, `$team` for coordinated parallel work, or `$plan` when the task needs explicit planning first. Use `/goal` when the task itself needs a durable objective/checkpoint structure that Codex should keep reconciling across turns.
+When native `get_goal` responses are unavailable or wrapped by the tool transport, Ultragoal preserves artifact-backed status without claiming completion; see [Ultragoal goal-mode diagnostics and recovery](./docs/ultragoal.md).
 
 Add only 2-5 relevant skills by default. More skills are allowed when the task scope justifies them, but loading a large catalog is usually a context-budget and attention-quality problem, not a hard parser/runtime blocker. Treat it as a concrete runtime blocker only when a command actually errors.
 
@@ -408,6 +409,17 @@ omx team status <team-name>
 omx team resume <team-name>
 omx team shutdown <team-name>
 ```
+
+`omx team status [<team-name>] [--json]` only observes existing state, so it can
+run against a read-only OMX root. It does not reclaim expired claims, deliver
+mailbox messages, integrate worker commits, or update runtime state. Without a
+team name, status resolves only a unique team belonging to the current leader
+session; provide an explicit name when no matching context is available.
+
+`omx tmux-hook status` is also observational. If hook configuration is missing,
+it reports that condition without creating files; use `omx tmux-hook init` to
+initialize configuration explicitly.
+
 
 ### Setup, doctor, and HUD
 
